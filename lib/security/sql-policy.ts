@@ -39,11 +39,20 @@ export function validateSql(
     errors.push('The query contains a blocked statement or command.');
   if (dangerousFunctions.test(normalized)) errors.push('The query contains a blocked function.');
 
-  let parsed: { tableList?: string[]; ast?: unknown } | undefined;
+  let parsed:
+    | {
+        tableList?: string[];
+        ast?: {
+          type?: string;
+          into?: { position?: unknown };
+          with?: Array<{ name?: { value?: string } | string }>;
+        };
+      }
+    | undefined;
   if (!errors.length) {
     try {
       parsed = parser.parse(normalized, { database: parserDialect[dialect] }) as typeof parsed;
-      const ast = parsed?.ast as { type?: string; into?: { position?: unknown } };
+      const ast = parsed?.ast;
       if (ast?.type !== 'select')
         errors.push('The query could not be verified as a SELECT statement.');
       if (ast?.into?.position) errors.push('SELECT INTO is not allowed.');
@@ -52,13 +61,33 @@ export function validateSql(
     }
   }
 
+  const cteNames = new Set(
+    (parsed?.ast?.with ?? [])
+      .map(cte => (typeof cte.name === 'string' ? cte.name : cte.name?.value))
+      .filter((name): name is string => Boolean(name))
+      .map(name => name.toLowerCase()),
+  );
   const tables = (parsed?.tableList ?? [])
-    .map(entry => entry.replace(/^select::/, '').replaceAll('::', '.'))
-    .filter(entry => entry && entry !== '(.*)');
+    .map(entry =>
+      entry
+        .replace(/^select::/, '')
+        .replaceAll('::', '.')
+        .replace(/^null\./i, ''),
+    )
+    .filter(entry => entry && entry !== '(.*)' && !cteNames.has(entry.toLowerCase()));
   if (
     allowedObjects.length &&
     tables.some(
-      table => !allowedObjects.some(allowed => table === allowed || table.endsWith(`.${allowed}`)),
+      table =>
+        !allowedObjects.some(allowed => {
+          const actual = table.toLowerCase();
+          const configured = allowed.toLowerCase();
+          return (
+            actual === configured ||
+            actual.endsWith(`.${configured}`) ||
+            configured.endsWith(`.${actual}`)
+          );
+        }),
     )
   ) {
     errors.push('The query references a table outside the configured allowlist.');

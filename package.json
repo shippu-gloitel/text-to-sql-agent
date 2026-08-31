@@ -25,7 +25,8 @@
   },
   "lint-staged": {
     "**/*.{jsx,tsx,js,cjs,mjs,ts,cts,mts,json,jsonc,md}": [
-      "bun run format"
+      "bun run format",
+      "bun run lint:fix"
     ]
   },
   "dependencies": {

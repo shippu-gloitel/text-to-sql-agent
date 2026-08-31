@@ -15,7 +15,9 @@ import {
   FileText,
   KeyRound,
   Lock,
+  Maximize2,
   MessageSquare,
+  Minimize2,
   Pencil,
   Plus,
   RefreshCw,
@@ -86,7 +88,6 @@ type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
   text?: string;
-  prompt?: string;
   stages?: string[];
   currentStage?: string;
   sql?: string;
@@ -206,6 +207,18 @@ function makeModel(form: ModelForm): ModelProfile {
     temperature: Number(form.temperature) || 0,
   });
 }
+function friendlyTestError(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) return fallback;
+  const message = error.message.trim();
+  if (
+    !message ||
+    error.name === 'ZodError' ||
+    error.name === 'SyntaxError' ||
+    /failed to fetch|networkerror|network request/i.test(message)
+  )
+    return fallback;
+  return message;
+}
 function updateMessage(messages: ChatMessage[], id: string, update: Partial<ChatMessage>) {
   return messages.map(message => (message.id === id ? { ...message, ...update } : message));
 }
@@ -220,7 +233,16 @@ async function consumeStream(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error('The request could not be started.');
+  if (!response.ok) {
+    let message = 'The request could not be started.';
+    try {
+      const data = (await response.json()) as { message?: unknown };
+      if (typeof data.message === 'string' && data.message.trim()) message = data.message;
+    } catch {
+      // Keep the safe fallback when the server does not return JSON.
+    }
+    throw new Error(message);
+  }
   if (!response.body) throw new Error('Streaming is not available in this browser.');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -382,6 +404,8 @@ export default function Home() {
     }
   };
   const testDatabase = async () => {
+    const fallbackMessage =
+      'Database connection failed. Check the host, port, database, and credentials.';
     try {
       setDbCheck({ state: 'testing' });
       const connection = makeConnection(setup);
@@ -396,7 +420,9 @@ export default function Home() {
         latencyMs?: number;
         message?: string;
       };
-      if (!response.ok || !data.ok) throw new Error(data.message);
+      if (!response.ok || !data.ok) {
+        throw new Error(data.message?.trim() || fallbackMessage);
+      }
       setDbCheck({
         state: 'success',
         message: 'Connected and ready',
@@ -405,12 +431,12 @@ export default function Home() {
     } catch (error) {
       setDbCheck({
         state: 'error',
-        message:
-          error instanceof Error ? error.message : 'Check the connection details and try again.',
+        message: friendlyTestError(error, fallbackMessage),
       });
     }
   };
   const testModel = async () => {
+    const fallbackMessage = 'Model connection failed. Check the provider, model, and API key.';
     try {
       setModelCheck({ state: 'testing' });
       const model = makeModel(modelForm);
@@ -426,7 +452,9 @@ export default function Home() {
         latencyMs?: number;
         message?: string;
       };
-      if (!response.ok || !data.ok) throw new Error(data.message);
+      if (!response.ok || !data.ok) {
+        throw new Error(data.message?.trim() || fallbackMessage);
+      }
       setModelCheck({
         state: 'success',
         message: 'Model is responding',
@@ -435,9 +463,21 @@ export default function Home() {
     } catch (error) {
       setModelCheck({
         state: 'error',
-        message: error instanceof Error ? error.message : 'Check the provider, model, and API key.',
+        message: friendlyTestError(error, fallbackMessage),
       });
     }
+  };
+  const resetDatabaseForm = () => {
+    setSetup({ ...initialSetup });
+    setDbAdvanced(false);
+    setShowPassword(false);
+    setDbCheck({ state: 'idle' });
+  };
+  const resetModelForm = () => {
+    setModelForm({ ...initialModel });
+    setModelAdvanced(false);
+    setShowApiKey(false);
+    setModelCheck({ state: 'idle' });
   };
   const saveWorkspace = async () => {
     if (!passphrase || dbCheck.state !== 'success' || modelCheck.state !== 'success') return;
@@ -596,7 +636,6 @@ export default function Home() {
       {
         id: assistantId,
         role: 'assistant',
-        prompt: userText,
         running: true,
         stages: [],
         currentStage: 'Understanding question',
@@ -684,6 +723,8 @@ export default function Home() {
         setModelCheck={setModelCheck}
         testDatabase={testDatabase}
         testModel={testModel}
+        resetDatabaseForm={resetDatabaseForm}
+        resetModelForm={resetModelForm}
         saveWorkspace={saveWorkspace}
       />
     );
@@ -949,6 +990,8 @@ function SetupScreen(props: {
   >;
   testDatabase: () => void;
   testModel: () => void;
+  resetDatabaseForm: () => void;
+  resetModelForm: () => void;
   saveWorkspace: () => void;
 }) {
   const { setup, setSetup, model, setModel } = props;
@@ -1180,18 +1223,28 @@ function SetupScreen(props: {
           )}
           <div className='test-row'>
             <TestStatus {...props.dbCheck} />
-            <button
-              className='outline-button'
-              onClick={props.testDatabase}
-              disabled={props.dbCheck.state === 'testing'}
-            >
-              {props.dbCheck.state === 'testing' ? (
-                <RefreshCw className='spin' size={16} />
-              ) : (
-                <Zap size={16} />
-              )}
-              Test database connection
-            </button>
+            <div className='test-actions'>
+              <button
+                className='ghost-button reset-form-button'
+                onClick={props.resetDatabaseForm}
+                disabled={props.dbCheck.state === 'testing'}
+              >
+                <RefreshCw size={15} />
+                Reset form
+              </button>
+              <button
+                className='outline-button'
+                onClick={props.testDatabase}
+                disabled={props.dbCheck.state === 'testing'}
+              >
+                {props.dbCheck.state === 'testing' ? (
+                  <RefreshCw className='spin' size={16} />
+                ) : (
+                  <Zap size={16} />
+                )}
+                Test database connection
+              </button>
+            </div>
           </div>
         </section>
         <section className='setup-card'>
@@ -1268,18 +1321,28 @@ function SetupScreen(props: {
           )}
           <div className='test-row'>
             <TestStatus {...props.modelCheck} />
-            <button
-              className='outline-button'
-              onClick={props.testModel}
-              disabled={props.modelCheck.state === 'testing'}
-            >
-              {props.modelCheck.state === 'testing' ? (
-                <RefreshCw className='spin' size={16} />
-              ) : (
-                <Zap size={16} />
-              )}
-              Test model connection
-            </button>
+            <div className='test-actions'>
+              <button
+                className='ghost-button reset-form-button'
+                onClick={props.resetModelForm}
+                disabled={props.modelCheck.state === 'testing'}
+              >
+                <RefreshCw size={15} />
+                Reset form
+              </button>
+              <button
+                className='outline-button'
+                onClick={props.testModel}
+                disabled={props.modelCheck.state === 'testing'}
+              >
+                {props.modelCheck.state === 'testing' ? (
+                  <RefreshCw className='spin' size={16} />
+                ) : (
+                  <Zap size={16} />
+                )}
+                Test model connection
+              </button>
+            </div>
           </div>
         </section>
         <section className='setup-card security-card'>
@@ -1502,6 +1565,7 @@ function ChatScreen({
                 }}
                 placeholder='Ask a question about your connected database…'
                 rows={2}
+                maxLength={20000}
                 disabled={busy}
               />
               <button
@@ -1649,8 +1713,8 @@ function Message({
     return (
       <div className='message user-message'>
         <div className='message-avatar'>You</div>
-        <div className='message-bubble user-prompt-bubble'>
-          <span>{message.text}</span>
+        <div className='user-prompt-group'>
+          <div className='message-bubble'>{message.text}</div>
           <button
             className='message-copy-button'
             onClick={copyPrompt}
@@ -1772,9 +1836,7 @@ function Message({
             </div>
           </div>
         )}
-        {message.result && (
-          <ResultCard result={message.result} sql={message.sql} prompt={message.prompt} />
-        )}
+        {message.result && <ResultCard result={message.result} sql={message.sql} />}
       </div>
     </div>
   );
@@ -1805,19 +1867,12 @@ function StageTimeline({ stages, current }: { stages: string[]; current?: string
     </div>
   );
 }
-function ResultCard({
-  result,
-  sql,
-  prompt,
-}: {
-  result: QueryResult;
-  sql?: string;
-  prompt?: string;
-}) {
+function ResultCard({ result, sql }: { result: QueryResult; sql?: string }) {
   const [tab, setTab] = useState<'table' | 'details'>('table');
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [copied, setCopied] = useState<'data' | 'query' | 'prompt' | null>(null);
-  const copy = async (kind: 'data' | 'query' | 'prompt', value: string) => {
+  const [copied, setCopied] = useState<'data' | 'query' | null>(null);
+  const copy = async (kind: 'data' | 'query', value: string) => {
     try {
       if (!navigator.clipboard) return;
       await navigator.clipboard.writeText(value);
@@ -1828,8 +1883,24 @@ function ResultCard({
     }
   };
   const copyableData = JSON.stringify(result.rows, null, 2);
-  return (
-    <div className='result-card'>
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFullscreen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isFullscreen]);
+  const card = (
+    <div
+      className={`result-card ${isFullscreen ? 'fullscreen-result-card' : ''}`}
+      onClick={event => event.stopPropagation()}
+    >
       <div className='result-head'>
         <div>
           <span className='result-kicker'>
@@ -1843,16 +1914,6 @@ function ResultCard({
           </h3>
         </div>
         <div className='export-actions'>
-          {prompt && (
-            <button
-              className='export-button'
-              onClick={() => copy('prompt', prompt)}
-              title='Copy the user prompt'
-            >
-              {copied === 'prompt' ? <Check size={14} /> : <Copy size={14} />}
-              {copied === 'prompt' ? 'Copied' : 'Copy prompt'}
-            </button>
-          )}
           <button className='export-button' onClick={() => exportCsv(result)}>
             <FileText size={14} />
             CSV
@@ -1890,17 +1951,27 @@ function ResultCard({
           <div className='data-toolbar'>
             <span>
               <Table2 size={13} />
-              Displayed data
+              Result
             </span>
-            <button
-              className='export-button'
-              onClick={() => copy('data', copyableData)}
-              disabled={!result.columns.length}
-              title='Copy displayed rows as JSON'
-            >
-              {copied === 'data' ? <Check size={14} /> : <Copy size={14} />}
-              {copied === 'data' ? 'Copied' : 'Copy JSON'}
-            </button>
+            <div className='data-toolbar-actions'>
+              <button
+                className='export-button'
+                onClick={() => copy('data', copyableData)}
+                disabled={!result.columns.length}
+                title='Copy displayed rows as JSON'
+              >
+                {copied === 'data' ? <Check size={14} /> : <Copy size={14} />}
+                {copied === 'data' ? 'Copied' : 'Copy'}
+              </button>
+              <button
+                className='icon-button fullscreen-button'
+                onClick={() => setIsFullscreen(current => !current)}
+                aria-label={isFullscreen ? 'Exit fullscreen table' : 'Open table fullscreen'}
+                title={isFullscreen ? 'Exit fullscreen table' : 'Open table fullscreen'}
+              >
+                {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+              </button>
+            </div>
           </div>
           <div className='table-scroll'>
             <table>
@@ -1958,20 +2029,41 @@ function ResultCard({
                 <Terminal size={14} />
                 Validated read-only SQL
               </span>
-              <button
-                className='icon-button'
-                aria-label='Copy raw query'
-                onClick={() => copy('query', sql ?? '')}
-                disabled={!sql}
-              >
-                {copied === 'query' ? <Check size={14} /> : <Copy size={14} />}
-              </button>
+              <div className='code-actions'>
+                <button
+                  className='icon-button'
+                  aria-label='Copy raw query'
+                  onClick={() => copy('query', sql ?? '')}
+                  disabled={!sql}
+                >
+                  {copied === 'query' ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+                <button
+                  className='icon-button fullscreen-button'
+                  onClick={() => setIsFullscreen(current => !current)}
+                  aria-label={
+                    isFullscreen ? 'Exit fullscreen query details' : 'Open query details fullscreen'
+                  }
+                  title={
+                    isFullscreen ? 'Exit fullscreen query details' : 'Open query details fullscreen'
+                  }
+                >
+                  {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                </button>
+              </div>
             </div>
             <pre>{sql || 'The raw query is not available for this result.'}</pre>
           </div>
         </div>
       )}
     </div>
+  );
+  return isFullscreen ? (
+    <div className='table-fullscreen-backdrop' onClick={() => setIsFullscreen(false)}>
+      {card}
+    </div>
+  ) : (
+    card
   );
 }
 function SectionTitle({
@@ -2054,7 +2146,7 @@ function TestStatus({
       </span>
     );
   return (
-    <span className='test-status error'>
+    <span className='test-status error' role='alert'>
       <CircleAlert size={15} />
       <span>
         <strong>{message}</strong>

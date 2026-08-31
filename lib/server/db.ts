@@ -85,6 +85,7 @@ export async function healthCheck(input: ConnectionProfile) {
 export async function introspect(input: ConnectionProfile): Promise<SchemaSnapshot> {
   const profile = assertProfile(input);
   let tables: SchemaSnapshot['tables'] = [];
+  let relationships: SchemaSnapshot['relationships'] = [];
 
   if (profile.dialect === 'sqlite') {
     const Database = (await import('better-sqlite3')).default;
@@ -104,6 +105,17 @@ export async function introspect(input: ConnectionProfile): Promise<SchemaSnapsh
           }>
         ).map(column => ({ name: column.name, type: column.type || 'unknown' })),
       }));
+      relationships = names.flatMap(({ name }) => {
+        const foreignKeys = db
+          .prepare(`PRAGMA foreign_key_list(${quoteIdentifier(name, 'sqlite')})`)
+          .all() as Array<{ table: string; from: string; to: string }>;
+        return foreignKeys.map(foreignKey => ({
+          fromTable: name,
+          fromColumn: foreignKey.from,
+          toTable: foreignKey.table,
+          toColumn: foreignKey.to,
+        }));
+      });
     } finally {
       db.close();
     }
@@ -131,6 +143,21 @@ export async function introspect(input: ConnectionProfile): Promise<SchemaSnapsh
           type: row.data_type,
         })),
       );
+      try {
+        const foreignKeys = await client.query(
+          `SELECT from_ns.nspname AS from_schema, from_table.relname AS from_table, from_column.attname AS from_column, to_ns.nspname AS to_schema, to_table.relname AS to_table, to_column.attname AS to_column FROM pg_constraint constraint_row JOIN pg_class from_table ON from_table.oid = constraint_row.conrelid JOIN pg_namespace from_ns ON from_ns.oid = from_table.relnamespace JOIN pg_class to_table ON to_table.oid = constraint_row.confrelid JOIN pg_namespace to_ns ON to_ns.oid = to_table.relnamespace JOIN LATERAL unnest(constraint_row.conkey) WITH ORDINALITY AS from_key(attnum, position) ON true JOIN LATERAL unnest(constraint_row.confkey) WITH ORDINALITY AS to_key(attnum, position) ON to_key.position = from_key.position JOIN pg_attribute from_column ON from_column.attrelid = constraint_row.conrelid AND from_column.attnum = from_key.attnum JOIN pg_attribute to_column ON to_column.attrelid = constraint_row.confrelid AND to_column.attnum = to_key.attnum WHERE constraint_row.contype = 'f' AND from_ns.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY from_ns.nspname, from_table.relname, constraint_row.conname, from_key.position`,
+        );
+        relationships = foreignKeys.rows.map(row => ({
+          fromSchema: row.from_schema,
+          fromTable: row.from_table,
+          fromColumn: row.from_column,
+          toSchema: row.to_schema,
+          toTable: row.to_table,
+          toColumn: row.to_column,
+        }));
+      } catch {
+        relationships = [];
+      }
     } finally {
       await client.end();
     }
@@ -158,16 +185,32 @@ export async function introspect(input: ConnectionProfile): Promise<SchemaSnapsh
           type: row.data_type,
         })),
       );
+      try {
+        const [foreignKeyRows] = await connection.execute(
+          `SELECT TABLE_SCHEMA AS from_schema, TABLE_NAME AS from_table, COLUMN_NAME AS from_column, REFERENCED_TABLE_SCHEMA AS to_schema, REFERENCED_TABLE_NAME AS to_table, REFERENCED_COLUMN_NAME AS to_column FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION`,
+          [profile.database],
+        );
+        relationships = (foreignKeyRows as Array<Record<string, string>>).map(row => ({
+          fromSchema: row.from_schema,
+          fromTable: row.from_table,
+          fromColumn: row.from_column,
+          toSchema: row.to_schema,
+          toTable: row.to_table,
+          toColumn: row.to_column,
+        }));
+      } catch {
+        relationships = [];
+      }
     } finally {
       await connection.end();
     }
   }
 
   const fingerprint = createHash('sha256')
-    .update(JSON.stringify(tables))
+    .update(JSON.stringify({ tables, relationships }))
     .digest('hex')
     .slice(0, 16);
-  return { tables, fingerprint };
+  return { tables, relationships, fingerprint };
 }
 
 function groupColumns(rows: Array<{ schema: string; name: string; column: string; type: string }>) {
@@ -261,13 +304,23 @@ export async function executeReadOnly(
     }
   }
 
-  const serialized = JSON.stringify(result.rows, (_, value) =>
-    typeof value === 'bigint' ? value.toString() : value,
+  const serializedRows = result.rows.map(row =>
+    JSON.stringify(row, (_, value) => (typeof value === 'bigint' ? value.toString() : value)),
   );
-  const truncated =
-    result.rows.length > profile.maxRows ||
-    Buffer.byteLength(serialized) > profile.maxResponseBytes;
-  const rows = result.rows.slice(0, profile.maxRows);
+  const rows: Record<string, unknown>[] = [];
+  let responseBytes = 2;
+  for (let index = 0; index < result.rows.length; index += 1) {
+    const rowBytes = Buffer.byteLength(serializedRows[index]);
+    const separatorBytes = rows.length ? 1 : 0;
+    if (
+      rows.length >= profile.maxRows ||
+      responseBytes + separatorBytes + rowBytes > profile.maxResponseBytes
+    )
+      break;
+    rows.push(result.rows[index]);
+    responseBytes += separatorBytes + rowBytes;
+  }
+  const truncated = rows.length < result.rows.length;
   return {
     columns: result.columns,
     rows,

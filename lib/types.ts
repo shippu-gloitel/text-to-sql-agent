@@ -58,12 +58,22 @@ export const schemaSnapshotSchema = z.object({
       columns: z.array(z.object({ name: z.string(), type: z.string() })),
     }),
   ),
+  relationships: z.array(
+    z.object({
+      fromSchema: z.string().optional(),
+      fromTable: z.string(),
+      fromColumn: z.string(),
+      toSchema: z.string().optional(),
+      toTable: z.string(),
+      toColumn: z.string(),
+    }),
+  ),
   fingerprint: z.string(),
 });
 export type SchemaSnapshot = z.infer<typeof schemaSnapshotSchema>;
 
 export const runRequestSchema = z.object({
-  question: z.string().trim().min(2).max(2000),
+  question: z.string().trim().min(2).max(20000),
   connection: connectionProfileSchema,
   model: modelProfileSchema,
   threadId: z.string().min(8).max(120),
