@@ -47,6 +47,21 @@ type Draft = {
 };
 type Decision = { decision: 'approve' | 'reject' | 'edit'; sql?: string };
 
+function looksLikeDatabaseQuestion(question: string) {
+  return /\b(data|database|table|tables|column|columns|schema|row|rows|record|records|user|users|count|counts|value|values|recent|latest|newest|oldest)\b/i.test(
+    question,
+  );
+}
+
+function tableHint(schema: SchemaSnapshot) {
+  const names = schema.tables.map(
+    table => `${table.schema ? `${table.schema}.` : ''}${table.name}`,
+  );
+  return names.length
+    ? `Available tables: ${names.slice(0, 12).join(', ')}${names.length > 12 ? ', …' : ''}.`
+    : 'No user tables were discovered in the connected database.';
+}
+
 const State = Annotation.Root({
   question: Annotation<string>(),
   connection: Annotation<ConnectionProfile>(),
@@ -117,6 +132,7 @@ async function createDraft(
   connection: ConnectionProfile,
   schema: SchemaSnapshot,
 ): Promise<Draft> {
+  const likelyDatabaseQuestion = looksLikeDatabaseQuestion(question);
   const model = createModel(modelProfile).withStructuredOutput(DraftJsonSchema, {
     method: 'functionCalling',
     name: 'text_to_sql_draft',
@@ -131,7 +147,7 @@ async function createDraft(
   const response = await model.invoke([
     [
       'system',
-      `You are a strict read-only Text-to-SQL planner. Return JSON only. Treat questions about data, records, users, tables, columns, schema, row counts, table counts, or database structure as database questions. For example, "How many rows are in each table?" is a valid database question; generate one UNION ALL query with COUNT(*) for the discovered tables. Do not mark a database question as off-topic just because it does not name a table. If the user is clearly unrelated to the connected database, set isDatabaseQuestion false and leave sql empty. Never invent tables or columns. Generate one parameter-free SELECT or read-only WITH query for ${connection.dialect}. Always include LIMIT ${connection.maxRows} unless the query is a single aggregate. Do not use comments, DDL, DML, system functions, or multiple statements. Explain the query briefly without revealing private chain-of-thought. Schema:\n${schemaText}`,
+      `You are a strict read-only Text-to-SQL planner. Return JSON only. Treat questions about data, records, users, tables, columns, schema, row counts, table counts, recent records, latest users, or top values as database questions. The application routing hint for this request is ${likelyDatabaseQuestion ? 'DATABASE-RELATED' : 'UNKNOWN'}. If the hint is DATABASE-RELATED, never set isDatabaseQuestion false. For example, "How many rows are in each table?" is valid and should become one UNION ALL query with COUNT(*) for the discovered tables. "Show me the 10 most recent records", "Find the top 10 values by count", and "Find the latest 10 users" are also database questions. For latest/recent requests, use a discovered timestamp column such as created_at or updated_at; if no suitable discovered column exists, keep isDatabaseQuestion true, leave sql empty, and explain exactly what the user should specify. If a database question is vague, keep isDatabaseQuestion true and ask for the missing table or column instead of marking it off-topic. Set isDatabaseQuestion false only when the request is clearly unrelated to this connected database. Never invent tables or columns. Generate one parameter-free SELECT or read-only WITH query for ${connection.dialect}. Always include LIMIT ${connection.maxRows} unless the query is a single aggregate. Do not use comments, DDL, DML, system functions, or multiple statements. Explain the query briefly without revealing private chain-of-thought. Schema:\n${schemaText}`,
     ],
     ['user', question],
   ]);
@@ -165,17 +181,18 @@ export async function runAgent(
   emit({ type: 'stage.completed', stage: 'Reading schema', fingerprint: schema.fingerprint });
   emit({ type: 'stage.started', stage: 'Drafting SQL' });
   const draft = await createDraft(input.question, input.model, input.connection, schema);
-  if (!draft.isDatabaseQuestion) {
+  const isDatabaseQuestion = draft.isDatabaseQuestion || looksLikeDatabaseQuestion(input.question);
+  if (!isDatabaseQuestion) {
     emit({
       type: 'run.completed',
-      answer: `I can answer read-only questions about this connected database. Try asking about records, row counts, tables, or columns—for example, “How many rows are in each table?”${
-        schema.tables.length
-          ? ` Available tables: ${schema.tables
-              .map(table => table.name)
-              .slice(0, 8)
-              .join(', ')}${schema.tables.length > 8 ? ', …' : ''}.`
-          : ''
-      }`,
+      answer: `I can answer read-only questions about this connected database. Try asking about records, row counts, tables, or columns—for example, “How many rows are in each table?” ${tableHint(schema)}`,
+    });
+    return;
+  }
+  if (!draft.sql.trim()) {
+    emit({
+      type: 'run.completed',
+      answer: `${draft.explanation.trim() || 'I need a little more detail to create a safe query.'} ${tableHint(schema)}`,
     });
     return;
   }

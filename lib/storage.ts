@@ -5,6 +5,10 @@ import type { SessionVaultEnvelope, VaultEnvelope } from './security/vault';
 export const STORAGE_KEYS = {
   vault: 'tsql.v1.vault',
   settings: 'tsql.v1.settings',
+  threads: 'tsql.v2.threads',
+} as const;
+
+export const LEGACY_STORAGE_KEYS = {
   threads: 'tsql.v1.threads',
 } as const;
 
@@ -55,5 +59,7 @@ export function clearSessionVault() {
 }
 
 export function clearAppStorage() {
-  Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
+  [...Object.values(STORAGE_KEYS), ...Object.values(LEGACY_STORAGE_KEYS)].forEach(key =>
+    localStorage.removeItem(key),
+  );
 }

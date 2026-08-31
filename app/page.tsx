@@ -16,6 +16,8 @@ import {
   KeyRound,
   Lock,
   MessageSquare,
+  Pencil,
+  Plus,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -45,6 +47,7 @@ import {
 import {
   clearAppStorage,
   clearSessionVault,
+  LEGACY_STORAGE_KEYS,
   readSessionVault,
   readStorage,
   readVault,
@@ -83,6 +86,7 @@ type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
   text?: string;
+  prompt?: string;
   stages?: string[];
   currentStage?: string;
   sql?: string;
@@ -90,6 +94,13 @@ type ChatMessage = {
   result?: QueryResult;
   running?: boolean;
   rejected?: boolean;
+};
+type ChatThread = {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
 };
 
 const initialSetup: SetupForm = {
@@ -120,6 +131,45 @@ const defaultMessage: ChatMessage = {
   role: 'assistant',
   text: 'Ask for a read-only view of your connected data. Try “How many rows are in each table?”, “Show the five newest users”, or “Which columns does the users table have?” Every generated query waits for your approval before it runs.',
 };
+
+function threadTitle(messages: ChatMessage[]) {
+  const question = messages.find(message => message.role === 'user')?.text?.trim();
+  if (!question) return 'New conversation';
+  const compact = question.replace(/\s+/g, ' ');
+  return compact.length > 58 ? `${compact.slice(0, 58)}…` : compact;
+}
+
+function isChatThread(value: unknown): value is ChatThread {
+  if (!value || typeof value !== 'object') return false;
+  const thread = value as Partial<ChatThread>;
+  return (
+    typeof thread.id === 'string' &&
+    typeof thread.title === 'string' &&
+    Array.isArray(thread.messages) &&
+    typeof thread.createdAt === 'number' &&
+    typeof thread.updatedAt === 'number'
+  );
+}
+
+function readThreads() {
+  const current = readStorage<unknown>(STORAGE_KEYS.threads, null);
+  if (Array.isArray(current)) return current.filter(isChatThread);
+
+  const legacy = readStorage<unknown>(LEGACY_STORAGE_KEYS.threads, null);
+  if (!Array.isArray(legacy) || !legacy.length) return [];
+  const messages = legacy as ChatMessage[];
+  if (!messages.some(message => message.role === 'user')) return [];
+  const timestamp = Date.now();
+  return [
+    {
+      id: `thread-${crypto.randomUUID()}`,
+      title: threadTitle(messages),
+      messages,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+  ];
+}
 
 function makeConnection(form: SetupForm): ConnectionProfile {
   const common = {
@@ -253,17 +303,22 @@ export default function Home() {
     details?: string;
   }>({ state: 'idle' });
   const [messages, setMessages] = useState<ChatMessage[]>([defaultMessage]);
+  const [threads, setThreads] = useState<ChatThread[]>([]);
   const [question, setQuestion] = useState('');
   const [threadId, setThreadId] = useState('');
   const [busy, setBusy] = useState(false);
   const [unlockError, setUnlockError] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [threadDeleteTarget, setThreadDeleteTarget] = useState<ChatThread | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const applyProfiles = useCallback((value: StoredProfiles) => {
     setProfiles(value);
-    const savedMessages = readStorage<ChatMessage[]>(STORAGE_KEYS.threads, []);
-    setMessages(savedMessages.length ? savedMessages : [defaultMessage]);
+    const savedThreads = readThreads();
+    const activeThread = [...savedThreads].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    setThreads(savedThreads);
+    setThreadId(activeThread?.id ?? `thread-${crypto.randomUUID()}`);
+    setMessages(activeThread?.messages.length ? activeThread.messages : [defaultMessage]);
   }, []);
 
   useEffect(() => {
@@ -283,7 +338,6 @@ export default function Home() {
         }
       }
       if (!cancelled) {
-        setThreadId(`thread-${crypto.randomUUID()}`);
         setHydrated(true);
       }
     };
@@ -296,8 +350,26 @@ export default function Home() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
   useEffect(() => {
-    if (profiles) writeStorage(STORAGE_KEYS.threads, messages.slice(-30));
-  }, [messages, profiles]);
+    if (!profiles) return;
+    writeStorage(STORAGE_KEYS.threads, threads);
+  }, [profiles, threads]);
+  useEffect(() => {
+    if (!profiles || !threadId || !messages.some(message => message.role === 'user')) return;
+    setThreads(current => {
+      const existing = current.find(thread => thread.id === threadId);
+      const updated: ChatThread = {
+        id: threadId,
+        title:
+          existing && existing.title !== 'New conversation'
+            ? existing.title
+            : threadTitle(messages),
+        messages: messages.slice(-30),
+        createdAt: existing?.createdAt ?? Date.now(),
+        updatedAt: Date.now(),
+      };
+      return [updated, ...current.filter(thread => thread.id !== threadId)];
+    });
+  }, [messages, profiles, threadId]);
   const unlock = async () => {
     if (!vault || !passphrase) return;
     try {
@@ -397,6 +469,54 @@ export default function Home() {
     setProfiles(null);
     setPassphrase('');
   };
+  const startNewThread = () => {
+    if (busy) return;
+    const id = `thread-${crypto.randomUUID()}`;
+    const timestamp = Date.now();
+    setThreads(current => [
+      {
+        id,
+        title: 'New conversation',
+        messages: [defaultMessage],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+      ...current,
+    ]);
+    setThreadId(id);
+    setMessages([defaultMessage]);
+    setQuestion('');
+  };
+  const selectThread = (id: string) => {
+    if (busy) return;
+    const selected = threads.find(thread => thread.id === id);
+    if (!selected) return;
+    setThreadId(selected.id);
+    setMessages(selected.messages);
+    setQuestion('');
+  };
+  const renameThread = (id: string, title: string) => {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    setThreads(current =>
+      current.map(thread => (thread.id === id ? { ...thread, title: nextTitle } : thread)),
+    );
+  };
+  const requestDeleteThread = (id: string) => {
+    if (busy) return;
+    setThreadDeleteTarget(threads.find(thread => thread.id === id) ?? null);
+  };
+  const deleteThread = () => {
+    if (!threadDeleteTarget) return;
+    const deletedId = threadDeleteTarget.id;
+    setThreads(current => current.filter(thread => thread.id !== deletedId));
+    if (deletedId === threadId) {
+      setThreadId(`thread-${crypto.randomUUID()}`);
+      setMessages([defaultMessage]);
+      setQuestion('');
+    }
+    setThreadDeleteTarget(null);
+  };
   const streamRun = async (url: string, body: unknown, assistantId: string) => {
     try {
       await consumeStream(url, body, event => {
@@ -476,6 +596,7 @@ export default function Home() {
       {
         id: assistantId,
         role: 'assistant',
+        prompt: userText,
         running: true,
         stages: [],
         currentStage: 'Understanding question',
@@ -526,12 +647,18 @@ export default function Home() {
       <ChatScreen
         profiles={profiles}
         messages={messages}
+        threads={threads}
+        activeThreadId={threadId}
         question={question}
         setQuestion={setQuestion}
         busy={busy}
         scrollRef={scrollRef}
         submitQuestion={submitQuestion}
         resume={resume}
+        startNewThread={startNewThread}
+        selectThread={selectThread}
+        renameThread={renameThread}
+        requestDeleteThread={requestDeleteThread}
         lockWorkspace={lockWorkspace}
         clearWorkspace={requestClearWorkspace}
       />
@@ -576,6 +703,13 @@ export default function Home() {
               return false;
             }
           }}
+        />
+      )}
+      {threadDeleteTarget && (
+        <DeleteThreadModal
+          title={threadDeleteTarget.title}
+          cancel={() => setThreadDeleteTarget(null)}
+          confirm={deleteThread}
         />
       )}
     </>
@@ -683,6 +817,55 @@ function DeleteWorkspaceModal({
       setChecking(false);
     }
   }
+}
+
+function DeleteThreadModal({
+  title,
+  cancel,
+  confirm,
+}: {
+  title: string;
+  cancel: () => void;
+  confirm: () => void;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cancel();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [cancel]);
+
+  return (
+    <div className='modal-backdrop' role='presentation' onMouseDown={cancel}>
+      <section
+        className='confirm-modal thread-delete-modal'
+        role='dialog'
+        aria-modal='true'
+        aria-labelledby='delete-thread-title'
+        onMouseDown={event => event.stopPropagation()}
+      >
+        <div className='modal-icon'>
+          <Trash2 size={18} />
+        </div>
+        <p className='eyebrow'>Conversation</p>
+        <h2 id='delete-thread-title'>Delete this chat?</h2>
+        <p className='muted'>
+          The following conversation and its local messages will be permanently removed.
+        </p>
+        <div className='thread-delete-name'>“{title}”</div>
+        <p className='modal-warning'>This action cannot be undone.</p>
+        <div className='modal-actions'>
+          <button className='ghost-button' onClick={cancel} autoFocus>
+            Keep chat
+          </button>
+          <button className='danger-button' onClick={confirm}>
+            <Trash2 size={15} /> Delete chat
+          </button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function UnlockScreen({
@@ -1168,23 +1351,35 @@ function SetupScreen(props: {
 function ChatScreen({
   profiles,
   messages,
+  threads,
+  activeThreadId,
   question,
   setQuestion,
   busy,
   scrollRef,
   submitQuestion,
   resume,
+  startNewThread,
+  selectThread,
+  renameThread,
+  requestDeleteThread,
   lockWorkspace,
   clearWorkspace,
 }: {
   profiles: StoredProfiles;
   messages: ChatMessage[];
+  threads: ChatThread[];
+  activeThreadId: string;
   question: string;
   setQuestion: (value: string) => void;
   busy: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   submitQuestion: () => void;
   resume: (assistantId: string, decision: 'approve' | 'reject' | 'edit', sql?: string) => void;
+  startNewThread: () => void;
+  selectThread: (id: string) => void;
+  renameThread: (id: string, title: string) => void;
+  requestDeleteThread: (id: string) => void;
   lockWorkspace: () => void;
   clearWorkspace: () => void;
 }) {
@@ -1223,14 +1418,44 @@ function ChatScreen({
       </header>
       <div className='chat-layout'>
         <aside className='sidebar'>
-          <div className='sidebar-label'>Workspace</div>
-          <button className='sidebar-item active'>
-            <MessageSquare size={16} />
-            <span>New conversation</span>
-            <span className='live-dot' />
-          </button>
-          <div className='sidebar-label history-label'>Recent</div>
-          <div className='sidebar-empty'>Your local conversation history will appear here.</div>
+          <div className='sidebar-heading'>
+            <div className='sidebar-label'>Workspace</div>
+            {threads.length > 0 && (
+              <button
+                className='new-thread-button'
+                onClick={startNewThread}
+                disabled={busy}
+                aria-label='Start new conversation'
+                title='Start new conversation'
+              >
+                <Plus size={15} />
+              </button>
+            )}
+          </div>
+          {threads.length === 0 ? (
+            <button className='sidebar-item active' onClick={startNewThread} disabled={busy}>
+              <MessageSquare size={16} />
+              <span>New conversation</span>
+              <span className='live-dot' />
+            </button>
+          ) : (
+            <>
+              <div className='sidebar-label history-label'>Recent</div>
+              <div className='thread-list'>
+                {threads.map(thread => (
+                  <ChatThreadItem
+                    key={thread.id}
+                    thread={thread}
+                    active={thread.id === activeThreadId}
+                    disabled={busy}
+                    select={selectThread}
+                    rename={renameThread}
+                    requestDelete={requestDeleteThread}
+                  />
+                ))}
+              </div>
+            </>
+          )}
           <div className='sidebar-bottom'>
             <div className='mini-health'>
               <span className='status-dot' />
@@ -1265,17 +1490,6 @@ function ChatScreen({
             ))}
           </div>
           <div className='composer-wrap'>
-            <div className='suggestions'>
-              <button onClick={() => setQuestion('Show me the 10 most recent records')}>
-                Recent records
-              </button>
-              <button onClick={() => setQuestion('How many rows are in each table?')}>
-                Table counts
-              </button>
-              <button onClick={() => setQuestion('Find the top 10 values by count')}>
-                Top values
-              </button>
-            </div>
             <div className='composer'>
               <textarea
                 value={question}
@@ -1316,6 +1530,97 @@ function ChatScreen({
   );
 }
 
+function ChatThreadItem({
+  thread,
+  active,
+  disabled,
+  select,
+  rename,
+  requestDelete,
+}: {
+  thread: ChatThread;
+  active: boolean;
+  disabled: boolean;
+  select: (id: string) => void;
+  rename: (id: string, title: string) => void;
+  requestDelete: (id: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(thread.title);
+
+  if (editing)
+    return (
+      <form
+        className='thread-edit-form'
+        onSubmit={event => {
+          event.preventDefault();
+          rename(thread.id, draft);
+          setEditing(false);
+        }}
+      >
+        <input
+          value={draft}
+          onChange={event => setDraft(event.target.value)}
+          aria-label='Conversation name'
+          autoFocus
+        />
+        <button type='submit' className='thread-action' aria-label='Save conversation name'>
+          <Check size={14} />
+        </button>
+        <button
+          type='button'
+          className='thread-action'
+          onClick={() => setEditing(false)}
+          aria-label='Cancel rename'
+        >
+          <X size={14} />
+        </button>
+      </form>
+    );
+
+  return (
+    <div className={`thread-item ${active ? 'active' : ''}`}>
+      <button
+        className='thread-select'
+        onClick={() => select(thread.id)}
+        disabled={disabled}
+        title={thread.title}
+      >
+        <MessageSquare size={15} />
+        <span className='thread-copy'>
+          <strong>{thread.title}</strong>
+          <small>
+            {thread.messages.filter(message => message.role === 'user').length} questions
+          </small>
+        </span>
+      </button>
+      <div className='thread-actions'>
+        <button
+          className='thread-action'
+          onClick={() => {
+            setDraft(thread.title);
+            setEditing(true);
+          }}
+          disabled={disabled}
+          aria-label={`Rename ${thread.title}`}
+          title='Rename conversation'
+        >
+          <Pencil size={13} />
+        </button>
+        <button
+          className='thread-action delete-thread-action'
+          onClick={() => requestDelete(thread.id)}
+          disabled={disabled}
+          aria-label={`Delete ${thread.title}`}
+          title='Delete conversation'
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Message({
   message,
   resume,
@@ -1327,11 +1632,34 @@ function Message({
 }) {
   const [editing, setEditing] = useState(false);
   const [editedSql, setEditedSql] = useState(message.approval?.sql ?? '');
+  const [promptCopied, setPromptCopied] = useState(false);
+
+  const copyPrompt = async () => {
+    if (!message.text || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(message.text);
+      setPromptCopied(true);
+      window.setTimeout(() => setPromptCopied(false), 1600);
+    } catch {
+      setPromptCopied(false);
+    }
+  };
+
   if (message.role === 'user')
     return (
       <div className='message user-message'>
         <div className='message-avatar'>You</div>
-        <div className='message-bubble'>{message.text}</div>
+        <div className='message-bubble user-prompt-bubble'>
+          <span>{message.text}</span>
+          <button
+            className='message-copy-button'
+            onClick={copyPrompt}
+            aria-label={promptCopied ? 'Prompt copied' : 'Copy user prompt'}
+            title={promptCopied ? 'Prompt copied' : 'Copy user prompt'}
+          >
+            {promptCopied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+        </div>
       </div>
     );
   return (
@@ -1444,7 +1772,9 @@ function Message({
             </div>
           </div>
         )}
-        {message.result && <ResultCard result={message.result} />}
+        {message.result && (
+          <ResultCard result={message.result} sql={message.sql} prompt={message.prompt} />
+        )}
       </div>
     </div>
   );
@@ -1475,9 +1805,29 @@ function StageTimeline({ stages, current }: { stages: string[]; current?: string
     </div>
   );
 }
-function ResultCard({ result }: { result: QueryResult }) {
-  const [tab, setTab] = useState<'table' | 'metadata'>('table');
+function ResultCard({
+  result,
+  sql,
+  prompt,
+}: {
+  result: QueryResult;
+  sql?: string;
+  prompt?: string;
+}) {
+  const [tab, setTab] = useState<'table' | 'details'>('table');
   const [exporting, setExporting] = useState(false);
+  const [copied, setCopied] = useState<'data' | 'query' | 'prompt' | null>(null);
+  const copy = async (kind: 'data' | 'query' | 'prompt', value: string) => {
+    try {
+      if (!navigator.clipboard) return;
+      await navigator.clipboard.writeText(value);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1600);
+    } catch {
+      setCopied(null);
+    }
+  };
+  const copyableData = JSON.stringify(result.rows, null, 2);
   return (
     <div className='result-card'>
       <div className='result-head'>
@@ -1493,6 +1843,16 @@ function ResultCard({ result }: { result: QueryResult }) {
           </h3>
         </div>
         <div className='export-actions'>
+          {prompt && (
+            <button
+              className='export-button'
+              onClick={() => copy('prompt', prompt)}
+              title='Copy the user prompt'
+            >
+              {copied === 'prompt' ? <Check size={14} /> : <Copy size={14} />}
+              {copied === 'prompt' ? 'Copied' : 'Copy prompt'}
+            </button>
+          )}
           <button className='export-button' onClick={() => exportCsv(result)}>
             <FileText size={14} />
             CSV
@@ -1520,52 +1880,95 @@ function ResultCard({ result }: { result: QueryResult }) {
           <Table2 size={14} />
           Data
         </button>
-        <button className={tab === 'metadata' ? 'active' : ''} onClick={() => setTab('metadata')}>
+        <button className={tab === 'details' ? 'active' : ''} onClick={() => setTab('details')}>
           <Terminal size={14} />
-          Query info
+          Query details
         </button>
       </div>
       {tab === 'table' ? (
-        <div className='table-scroll'>
-          <table>
-            <thead>
-              <tr>
-                {result.columns.map(column => (
-                  <th key={column.name}>{column.name}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {result.rows.map((row, index) => (
-                <tr key={index}>
+        <>
+          <div className='data-toolbar'>
+            <span>
+              <Table2 size={13} />
+              Displayed data
+            </span>
+            <button
+              className='export-button'
+              onClick={() => copy('data', copyableData)}
+              disabled={!result.columns.length}
+              title='Copy displayed rows as JSON'
+            >
+              {copied === 'data' ? <Check size={14} /> : <Copy size={14} />}
+              {copied === 'data' ? 'Copied' : 'Copy JSON'}
+            </button>
+          </div>
+          <div className='table-scroll'>
+            <table>
+              <thead>
+                <tr>
                   {result.columns.map(column => (
-                    <td key={column.name}>{formatCell(row[column.name])}</td>
+                    <th key={column.name} title={column.name}>
+                      <span className='cell-value'>{column.name}</span>
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {result.truncated && (
-            <div className='truncated-note'>
-              <CircleAlert size={14} />
-              Showing the configured result limit. Refine your question for a smaller result.
-            </div>
-          )}
-        </div>
+              </thead>
+              <tbody>
+                {result.rows.map((row, index) => (
+                  <tr key={index}>
+                    {result.columns.map(column => {
+                      const value = formatCell(row[column.name]);
+                      return (
+                        <td key={column.name} title={value}>
+                          <span className='cell-value'>{value}</span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {result.truncated && (
+              <div className='truncated-note'>
+                <CircleAlert size={14} />
+                Showing the configured result limit. Refine your question for a smaller result.
+              </div>
+            )}
+          </div>
+        </>
       ) : (
-        <div className='metadata-grid'>
-          <span>
-            Rows returned<strong>{result.rowCount}</strong>
-          </span>
-          <span>
-            Duration<strong>{result.durationMs}ms</strong>
-          </span>
-          <span>
-            Columns<strong>{result.columns.length}</strong>
-          </span>
-          <span>
-            Mode<strong>Read-only</strong>
-          </span>
+        <div className='query-details'>
+          <div className='metadata-grid'>
+            <span>
+              Rows returned<strong>{result.rowCount}</strong>
+            </span>
+            <span>
+              Duration<strong>{result.durationMs}ms</strong>
+            </span>
+            <span>
+              Columns<strong>{result.columns.length}</strong>
+            </span>
+            <span>
+              Mode<strong>Read-only</strong>
+            </span>
+          </div>
+          <div className='sql-block raw-query-block'>
+            <div className='code-head'>
+              <span>
+                <Terminal size={14} />
+                Validated read-only SQL
+              </span>
+              <button
+                className='icon-button'
+                aria-label='Copy raw query'
+                onClick={() => copy('query', sql ?? '')}
+                disabled={!sql}
+              >
+                {copied === 'query' ? <Check size={14} /> : <Copy size={14} />}
+              </button>
+            </div>
+            <pre>{sql || 'The raw query is not available for this result.'}</pre>
+          </div>
         </div>
       )}
     </div>
