@@ -1,0 +1,91 @@
+#! Frontend
+
+.next
+next-env.d.ts
+node_modules
+package-lock.json
+yarn.lock
+.husky
+.vscode/*
+
+#build
+dist
+/dist/*
+build
+/build/*
+
+# PWA
+sw.js
+sw.js.map
+workbox-*.js
+workbox-*.js.map
+# Auto Generated PWA files
+**/public/sw.js
+**/public/workbox-*.js
+**/public/worker-*.js
+**/public/sw.js.map
+**/public/workbox-*.js.map
+**/public/worker-*.js.map
+
+#! Backed
+
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+dist
+build
+coverage
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+.serverless
+.warmup
+
+# Cache and logs
+.turbo
+.next
+.vercel
+.cache
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+logs
+
+# Environment and local files
+.env*
+.DS_Store
+
+# Package manager files
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+bun.lock
+bun.lockb
+
+# IDE specific files
+.idea
+.vscode
+*.swp
+*.swo
+.husky
+.dockerignore
+
+# Ensure build directories at any depth are ignored
+**/dist
+**/build
+**/coverage
+**/*.tsbuildinfo
+
+# agents
+.agents
+skills-lock.json
+.langgraph_api
+AGENTS.md
+CLAUDE.md
+
+# database
+**/migrations
