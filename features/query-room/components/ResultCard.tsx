@@ -20,6 +20,7 @@ export default function ResultCard({ result, sql }: { result: QueryResult; sql?:
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [copied, setCopied] = useState<'data' | 'query' | null>(null);
+
   const copy = async (kind: 'data' | 'query', value: string) => {
     try {
       if (!navigator.clipboard) return;
@@ -30,6 +31,7 @@ export default function ResultCard({ result, sql }: { result: QueryResult; sql?:
       setCopied(null);
     }
   };
+
   const copyableData = JSON.stringify(result.rows, null, 2);
   useEffect(() => {
     if (!isFullscreen) return;
@@ -44,6 +46,7 @@ export default function ResultCard({ result, sql }: { result: QueryResult; sql?:
       window.removeEventListener('keydown', closeOnEscape);
     };
   }, [isFullscreen]);
+
   const card = (
     <div
       className={`result-card ${isFullscreen ? 'fullscreen-result-card' : ''}`}

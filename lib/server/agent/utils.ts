@@ -189,12 +189,14 @@ export async function createDraft(
     name: 'text_to_sql_draft',
     strict: true,
   });
+
   const schemaText = schema.tables
     .map(
       table =>
         `${table.schema ? `${table.schema}.` : ''}${table.name}(${table.columns.map(column => `${column.name}:${column.type}`).join(', ')})`,
     )
     .join('\n');
+
   const relationshipText = schema.relationships.length
     ? schema.relationships
         .map(
@@ -203,6 +205,7 @@ export async function createDraft(
         )
         .join('\n')
     : 'No foreign-key relationships were discovered. Only join tables when the user provides a valid relationship.';
+
   const response = await model.invoke([
     [
       'system',

@@ -101,13 +101,16 @@ export default function QueryRoom() {
       cancelled = true;
     };
   }, [applyProfiles]);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
   useEffect(() => {
     if (!profiles) return;
     writeStorage(STORAGE_KEYS.threads, threads);
   }, [profiles, threads]);
+
   useEffect(() => {
     if (!profiles || !threadId || !messages.some(message => message.role === 'user')) return;
     setThreads(current => {
@@ -125,6 +128,7 @@ export default function QueryRoom() {
       return [updated, ...current.filter(thread => thread.id !== threadId)];
     });
   }, [messages, profiles, threadId]);
+
   const unlock = async () => {
     if (!vault || !passphrase) return;
     try {
@@ -136,6 +140,7 @@ export default function QueryRoom() {
       setUnlockError('That passphrase could not unlock this workspace.');
     }
   };
+
   const testDatabase = async () => {
     const fallbackMessage =
       'Database connection failed. Check the host, port, database, and credentials.';
@@ -168,6 +173,7 @@ export default function QueryRoom() {
       });
     }
   };
+
   const testModel = async () => {
     const fallbackMessage = 'Model connection failed. Check the provider, model, and API key.';
     try {
@@ -200,18 +206,21 @@ export default function QueryRoom() {
       });
     }
   };
+
   const resetDatabaseForm = () => {
     setSetup({ ...initialSetup });
     setDbAdvanced(false);
     setShowPassword(false);
     setDbCheck({ state: 'idle' });
   };
+
   const resetModelForm = () => {
     setModelForm({ ...initialModel });
     setModelAdvanced(false);
     setShowApiKey(false);
     setModelCheck({ state: 'idle' });
   };
+
   const saveWorkspace = async () => {
     if (!passphrase || dbCheck.state !== 'success' || modelCheck.state !== 'success') return;
     try {
@@ -225,7 +234,9 @@ export default function QueryRoom() {
       setDbCheck({ state: 'error', message: 'Complete the required fields before saving.' });
     }
   };
+
   const requestClearWorkspace = () => setDeleteConfirmOpen(true);
+
   const deleteWorkspace = () => {
     clearAppStorage();
     clearSessionVault();
@@ -237,11 +248,13 @@ export default function QueryRoom() {
     setDbCheck({ state: 'idle' });
     setModelCheck({ state: 'idle' });
   };
+
   const lockWorkspace = () => {
     clearSessionVault();
     setProfiles(null);
     setPassphrase('');
   };
+
   const startNewThread = () => {
     if (busy) return;
     const id = `thread-${crypto.randomUUID()}`;
@@ -260,6 +273,7 @@ export default function QueryRoom() {
     setMessages([defaultMessage]);
     setQuestion('');
   };
+
   const selectThread = (id: string) => {
     if (busy) return;
     const selected = threads.find(thread => thread.id === id);
@@ -268,6 +282,7 @@ export default function QueryRoom() {
     setMessages(selected.messages);
     setQuestion('');
   };
+
   const renameThread = (id: string, title: string) => {
     const nextTitle = title.trim();
     if (!nextTitle) return;
@@ -275,10 +290,12 @@ export default function QueryRoom() {
       current.map(thread => (thread.id === id ? { ...thread, title: nextTitle } : thread)),
     );
   };
+
   const requestDeleteThread = (id: string) => {
     if (busy) return;
     setThreadDeleteTarget(threads.find(thread => thread.id === id) ?? null);
   };
+
   const deleteThread = () => {
     if (!threadDeleteTarget) return;
     const deletedId = threadDeleteTarget.id;
@@ -290,6 +307,7 @@ export default function QueryRoom() {
     }
     setThreadDeleteTarget(null);
   };
+
   const streamRun = async (url: string, body: unknown, assistantId: string) => {
     try {
       await consumeStream(url, body, event => {
@@ -357,6 +375,7 @@ export default function QueryRoom() {
       setBusy(false);
     }
   };
+
   const submitQuestion = async () => {
     if (!profiles || !threadId || !question.trim() || busy) return;
     const userText = question.trim();
@@ -374,12 +393,14 @@ export default function QueryRoom() {
         currentStage: 'Understanding question',
       },
     ]);
+
     await streamRun(
       '/api/agent/run',
       { question: userText, connection: profiles.connection, model: profiles.model, threadId },
       assistantId,
     );
   };
+
   const resume = async (
     assistantId: string,
     decision: 'approve' | 'reject' | 'edit',
@@ -399,6 +420,7 @@ export default function QueryRoom() {
               : 'Executing approved query',
       }),
     );
+
     await streamRun(
       '/api/agent/resume',
       { threadId, decision, sql, connection: profiles.connection },
@@ -406,6 +428,7 @@ export default function QueryRoom() {
     );
   };
   if (!hydrated) return <div className='loading-screen'>Loading workspace…</div>;
+
   const screen =
     vault && !profiles ? (
       <UnlockScreen
@@ -479,6 +502,7 @@ export default function QueryRoom() {
           }}
         />
       )}
+
       {threadDeleteTarget && (
         <DeleteThreadModal
           title={threadDeleteTarget.title}

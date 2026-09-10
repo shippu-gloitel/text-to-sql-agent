@@ -55,6 +55,7 @@ export default function Message({
         </div>
       </div>
     );
+
   return (
     <div className='message assistant-message'>
       <div className='message-avatar assistant-avatar'>
@@ -70,6 +71,7 @@ export default function Message({
             {message.text}
           </p>
         )}
+
         {message.approval && (
           <div className='approval-card'>
             <div className='approval-head'>
@@ -170,6 +172,7 @@ export default function Message({
     </div>
   );
 }
+
 function StageTimeline({ stages, current }: { stages: string[]; current?: string }) {
   const unique = [...new Set(stages)];
   return (

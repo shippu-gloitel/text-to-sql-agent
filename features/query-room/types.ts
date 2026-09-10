@@ -28,6 +28,7 @@ export type ModelForm = {
 };
 
 export type StoredProfiles = { connection: ConnectionProfile; model: ModelProfile };
+
 export type Approval = { sql: string; explanation: string; tables: string[]; checks: string[] };
 
 export type ChatMessage = {

@@ -44,6 +44,7 @@ export const defaultMessage: ChatMessage = {
 export function threadTitle(messages: ChatMessage[]) {
   const question = messages.find(message => message.role === 'user')?.text?.trim();
   if (!question) return 'New conversation';
+
   const compact = question.replace(/\s+/g, ' ');
   return compact.length > 58 ? `${compact.slice(0, 58)}…` : compact;
 }
@@ -66,8 +67,10 @@ export function readThreads() {
 
   const legacy = readStorage<unknown>(LEGACY_STORAGE_KEYS.threads, null);
   if (!Array.isArray(legacy) || !legacy.length) return [];
+
   const messages = legacy as ChatMessage[];
   if (!messages.some(message => message.role === 'user')) return [];
+
   const timestamp = Date.now();
   return [
     {
@@ -93,8 +96,10 @@ export function makeConnection(form: SetupForm): ConnectionProfile {
       .map(item => item.trim())
       .filter(Boolean),
   };
+
   if (form.dialect === 'sqlite')
     return connectionProfileSchema.parse({ ...common, dialect: 'sqlite', path: form.path.trim() });
+
   return connectionProfileSchema.parse({
     ...common,
     dialect: form.dialect,
@@ -115,6 +120,7 @@ export function makeModel(form: ModelForm): ModelProfile {
     temperature: Number(form.temperature) || 0,
   });
 }
+
 export function friendlyTestError(error: unknown, fallback: string) {
   if (!(error instanceof Error)) return fallback;
   const message = error.message.trim();
@@ -127,6 +133,7 @@ export function friendlyTestError(error: unknown, fallback: string) {
     return fallback;
   return message;
 }
+
 export function updateMessage(messages: ChatMessage[], id: string, update: Partial<ChatMessage>) {
   return messages.map(message => (message.id === id ? { ...message, ...update } : message));
 }
@@ -152,6 +159,7 @@ export async function consumeStream(
     throw new Error(message);
   }
   if (!response.body) throw new Error('Streaming is not available in this browser.');
+
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -173,6 +181,7 @@ export function formatCell(value: unknown) {
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
+
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -181,6 +190,7 @@ export function downloadBlob(blob: Blob, filename: string) {
   anchor.click();
   URL.revokeObjectURL(url);
 }
+
 export function exportCsv(result: QueryResult) {
   const escape = (value: unknown) => `"${formatCell(value).replaceAll('"', '""')}"`;
   const header = result.columns.map(column => escape(column.name)).join(',');
@@ -192,12 +202,14 @@ export function exportCsv(result: QueryResult) {
     'query-results.csv',
   );
 }
+
 export function exportJson(result: QueryResult) {
   downloadBlob(
     new Blob([JSON.stringify(result.rows, null, 2)], { type: 'application/json' }),
     'query-results.json',
   );
 }
+
 export async function exportXlsx(result: QueryResult) {
   const ExcelJS = await import('exceljs');
   const workbook = new ExcelJS.Workbook();

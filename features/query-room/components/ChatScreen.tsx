@@ -142,8 +142,7 @@ export default function ChatScreen({
         <section className='conversation'>
           <div className='conversation-header'>
             <div>
-              <p className='eyebrow'>Live query room</p>
-              <h1>Ask your data.</h1>
+              <h1>Ask an Agent</h1>
             </div>
             <div className='hitl-indicator'>
               <ShieldCheck size={15} />

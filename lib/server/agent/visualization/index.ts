@@ -18,7 +18,7 @@ export async function GraphVisualization(type: 'mermaid' | 'png' | 'json' = 'mer
     case 'png': {
       const image = await drawableGraph.drawMermaidPng();
       const imageBuffer = new Uint8Array(await image.arrayBuffer());
-      await fs.writeFile('smarttiime-agent-graph.png', imageBuffer);
+      await fs.writeFile('agent.png', imageBuffer);
       break;
     }
 
