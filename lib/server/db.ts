@@ -84,7 +84,9 @@ export async function healthCheck(input: ConnectionProfile) {
 
 export async function introspect(input: ConnectionProfile): Promise<SchemaSnapshot> {
   const profile = assertProfile(input);
+  // eslint-disable-next-line no-useless-assignment
   let tables: SchemaSnapshot['tables'] = [];
+  // eslint-disable-next-line no-useless-assignment
   let relationships: SchemaSnapshot['relationships'] = [];
 
   if (profile.dialect === 'sqlite') {

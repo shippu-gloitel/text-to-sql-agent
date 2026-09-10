@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import * as fs from 'node:fs/promises';
 import { graph } from '../graph';
 

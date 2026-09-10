@@ -21,6 +21,7 @@ export type SqlValidation = {
   errors: string[];
 };
 
+// eslint-disable-next-line complexity
 export function validateSql(
   sql: string,
   dialect: Dialect,
