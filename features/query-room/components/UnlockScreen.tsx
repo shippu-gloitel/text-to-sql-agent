@@ -1,12 +1,18 @@
 import { CircleAlert, Lock, Trash2, Unlock } from 'lucide-react';
+import type { Theme } from '../types';
+import ThemeToggle from './ThemeToggle';
 
 export default function UnlockScreen({
+  theme,
+  toggleTheme,
   passphrase,
   setPassphrase,
   unlock,
   clearWorkspace,
   error,
 }: {
+  theme: Theme;
+  toggleTheme: () => void;
   passphrase: string;
   setPassphrase: (value: string) => void;
   unlock: () => void;
@@ -16,8 +22,11 @@ export default function UnlockScreen({
   return (
     <main className='center-stage'>
       <div className='unlock-card'>
-        <div className='brand-mark'>
-          <Lock size={18} />
+        <div className='unlock-head'>
+          <div className='brand-mark'>
+            <Lock size={18} />
+          </div>
+          <ThemeToggle theme={theme} toggle={toggleTheme} />
         </div>
         <p className='eyebrow'>Encrypted workspace</p>
         <h1>Welcome back.</h1>

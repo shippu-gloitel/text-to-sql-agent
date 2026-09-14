@@ -16,9 +16,12 @@ import {
   Zap,
 } from 'lucide-react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
-import { type CheckState, type ModelForm, type SetupForm } from '../types';
+import { type CheckState, type ModelForm, type SetupForm, type Theme } from '../types';
+import ThemeToggle from './ThemeToggle';
 
 export default function SetupScreen(props: {
+  theme: Theme;
+  toggleTheme: () => void;
   setup: SetupForm;
   setSetup: Dispatch<SetStateAction<SetupForm>>;
   model: ModelForm;
@@ -75,10 +78,13 @@ export default function SetupScreen(props: {
             <span className='brand-subtitle'>Read-only data intelligence</span>
           </div>
         </div>
-        <span className='status-pill'>
-          <span className='status-dot' />
-          Setup mode
-        </span>
+        <div className='topbar-actions'>
+          <span className='status-pill'>
+            <span className='status-dot' />
+            Setup mode
+          </span>
+          <ThemeToggle theme={props.theme} toggle={props.toggleTheme} />
+        </div>
       </header>
       <div className='setup-heading'>
         <div>

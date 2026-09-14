@@ -10,11 +10,14 @@ import {
   Trash2,
 } from 'lucide-react';
 import type React from 'react';
-import type { ChatMessage, ChatThread, StoredProfiles } from '../types';
+import type { ChatMessage, ChatThread, StoredProfiles, Theme } from '../types';
 import ChatThreadItem from './ChatThreadItem';
 import Message from './Message';
+import ThemeToggle from './ThemeToggle';
 
 export default function ChatScreen({
+  theme,
+  toggleTheme,
   profiles,
   messages,
   threads,
@@ -32,6 +35,8 @@ export default function ChatScreen({
   lockWorkspace,
   clearWorkspace,
 }: {
+  theme: Theme;
+  toggleTheme: () => void;
   profiles: StoredProfiles;
   messages: ChatMessage[];
   threads: ChatThread[];
@@ -68,6 +73,7 @@ export default function ChatScreen({
           <span>{profiles.connection.dialect}</span>
         </div>
         <div className='top-actions'>
+          <ThemeToggle theme={theme} toggle={toggleTheme} />
           <button className='ghost-button' onClick={lockWorkspace}>
             <Lock size={15} />
             Lock vault

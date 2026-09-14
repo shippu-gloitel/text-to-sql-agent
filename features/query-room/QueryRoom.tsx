@@ -19,7 +19,7 @@ import {
   STORAGE_KEYS,
 } from '@/lib/storage';
 import type { QueryResult } from '@/lib/types';
-import type { ChatMessage, ChatThread, StoredProfiles, CheckState } from './types';
+import type { ChatMessage, ChatThread, StoredProfiles, CheckState, Theme } from './types';
 import {
   consumeStream,
   defaultMessage,
@@ -65,7 +65,10 @@ export default function QueryRoom() {
   const [unlockError, setUnlockError] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [threadDeleteTarget, setThreadDeleteTarget] = useState<ChatThread | null>(null);
+  const [theme, setTheme] = useState<Theme>('dark');
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const toggleTheme = () => setTheme(current => (current === 'dark' ? 'light' : 'dark'));
 
   const applyProfiles = useCallback((value: StoredProfiles) => {
     setProfiles(value);
@@ -79,6 +82,8 @@ export default function QueryRoom() {
   useEffect(() => {
     let cancelled = false;
     const restoreWorkspace = async () => {
+      const savedTheme = window.localStorage.getItem('queryroom.theme');
+      if (savedTheme === 'light' || savedTheme === 'dark') setTheme(savedTheme);
       const savedVault = readVault();
       setVault(savedVault);
       if (savedVault) {
@@ -101,6 +106,11 @@ export default function QueryRoom() {
       cancelled = true;
     };
   }, [applyProfiles]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('queryroom.theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -432,6 +442,8 @@ export default function QueryRoom() {
   const screen =
     vault && !profiles ? (
       <UnlockScreen
+        theme={theme}
+        toggleTheme={toggleTheme}
         passphrase={passphrase}
         setPassphrase={setPassphrase}
         unlock={unlock}
@@ -440,6 +452,8 @@ export default function QueryRoom() {
       />
     ) : profiles ? (
       <ChatScreen
+        theme={theme}
+        toggleTheme={toggleTheme}
         profiles={profiles}
         messages={messages}
         threads={threads}
@@ -459,6 +473,8 @@ export default function QueryRoom() {
       />
     ) : (
       <SetupScreen
+        theme={theme}
+        toggleTheme={toggleTheme}
         setup={setup}
         setSetup={setSetup}
         model={modelForm}
