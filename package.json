@@ -1,24 +1,25 @@
 {
   "name": "text-to-sql-agent",
   "version": "0.1.0",
+  "description": "",
   "private": true,
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "test": "bun test",
-    "==============================UTILS=====================================================================": "",
+    "=========UTILS==========================================================================================": "",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "rm -rf .husky && husky && echo \"bun install\" > .husky/post-merge && chmod +x .husky/post-merge && echo \"bun run lint-staged\" > .husky/pre-commit && chmod +x .husky/pre-commit && echo \"bun run build\" > .husky/pre-push && chmod +x .husky/pre-push",
-    "===============================CLEANUP============================================================": "",
+    "========CLEANUP===================================================================================": "",
     "cleanup": "rm -rf node_modules .next *.tsbuildinfo .husky logs",
     "build:test": "bun run typecheck && bun run format && bun run lint && bun run build",
     "cid": "bun run cleanup && bun install && bun run build:test"
@@ -30,19 +31,19 @@
     ]
   },
   "dependencies": {
-    "@langchain/core": "^1.2.10",
-    "@langchain/langgraph": "^1.4.14",
-    "@langchain/openai": "^1.5.12",
+    "@langchain/core": "^1.2.11",
+    "@langchain/langgraph": "^1.4.15",
+    "@langchain/openai": "^1.5.13",
     "better-sqlite3": "^13.0.3",
     "exceljs": "^4.4.0",
-    "lucide-react": "^1.44.0",
+    "lucide-react": "^1.45.0",
     "mysql2": "^3.24.4",
-    "next": "16.3.4",
+    "next": "16.3.5",
     "node-sql-parser": "^5.4.0",
     "pg": "^8.23.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "zod": "^4.6.1"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -54,7 +55,7 @@
     "@types/react-dom": "^19.3.0",
     "babel-plugin-react-compiler": "^1.0.0",
     "eslint": "^10.10.0",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.3.5",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
     "eslint-plugin-react": "^7.37.5",

@@ -25,16 +25,16 @@ export default function Message({
 }) {
   const [editing, setEditing] = useState(false);
   const [editedSql, setEditedSql] = useState(message.approval?.sql ?? '');
-  const [promptCopied, setPromptCopied] = useState(false);
+  const [messageCopied, setMessageCopied] = useState(false);
 
-  const copyPrompt = async () => {
+  const copyMessage = async () => {
     if (!message.text || !navigator.clipboard) return;
     try {
       await navigator.clipboard.writeText(message.text);
-      setPromptCopied(true);
-      window.setTimeout(() => setPromptCopied(false), 1600);
+      setMessageCopied(true);
+      window.setTimeout(() => setMessageCopied(false), 1600);
     } catch {
-      setPromptCopied(false);
+      setMessageCopied(false);
     }
   };
 
@@ -46,11 +46,11 @@ export default function Message({
           <div className='message-bubble'>{message.text}</div>
           <button
             className='message-copy-button'
-            onClick={copyPrompt}
-            aria-label={promptCopied ? 'Prompt copied' : 'Copy user prompt'}
-            title={promptCopied ? 'Prompt copied' : 'Copy user prompt'}
+            onClick={copyMessage}
+            aria-label={messageCopied ? 'Message copied' : 'Copy user prompt'}
+            title={messageCopied ? 'Message copied' : 'Copy user prompt'}
           >
-            {promptCopied ? <Check size={14} /> : <Copy size={14} />}
+            {messageCopied ? <Check size={14} /> : <Copy size={14} />}
           </button>
         </div>
       </div>
@@ -66,10 +66,20 @@ export default function Message({
           <StageTimeline stages={message.stages ?? []} current={message.currentStage} />
         )}
         {message.text && (
-          <p className={message.rejected ? 'assistant-error' : ''}>
-            {message.rejected && <CircleAlert size={15} />}
-            {message.text}
-          </p>
+          <div className='assistant-text-group'>
+            <p className={message.rejected ? 'assistant-error' : ''}>
+              {message.rejected && <CircleAlert size={15} />}
+              {message.text}
+            </p>
+            <button
+              className='message-copy-button'
+              onClick={copyMessage}
+              aria-label={messageCopied ? 'Message copied' : 'Copy agent response'}
+              title={messageCopied ? 'Message copied' : 'Copy agent response'}
+            >
+              {messageCopied ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+          </div>
         )}
 
         {message.approval && (

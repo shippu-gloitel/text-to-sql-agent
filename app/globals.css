@@ -1116,11 +1116,22 @@ textarea:focus,
   max-width: 100%;
   flex: 1;
 }
-.assistant-content > p {
+.assistant-text-group {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+.assistant-content > p,
+.assistant-text-group > p {
+  flex: 1;
+  min-width: 0;
   margin: 3px 0 16px;
   color: #d2dce5;
   font-size: 13px;
   line-height: 1.7;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .assistant-error {
   display: flex;
@@ -1486,6 +1497,8 @@ textarea:focus,
   padding: 9px 10px;
   border: 0;
   background: transparent;
+  overflow-x: hidden;
+  overflow-y: auto;
   resize: none;
 }
 .send-button {

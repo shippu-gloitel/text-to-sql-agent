@@ -14,6 +14,7 @@ import {
   tableCatalogResult,
   tableHint,
   tableName,
+  isGreeting,
 } from './utils';
 import type { AgentDecision, AgentEmit, AgentInput } from './state';
 
@@ -33,6 +34,7 @@ async function requestApproval(
     checks: validation.checks,
   });
   emit({ type: 'stage.started', stage: 'Waiting for approval' });
+
   const result = await graph.invoke(
     {
       ...input,
@@ -44,6 +46,7 @@ async function requestApproval(
     },
     { configurable: { thread_id: input.threadId } },
   );
+
   if (isInterrupted(result)) {
     const approval = result.__interrupt__?.[0]?.value;
     emit({ type: 'approval.required', ...(approval as Record<string, unknown>) });
@@ -69,18 +72,31 @@ export async function runAgent(input: AgentInput, emit: AgentEmit) {
     .update(`${input.threadId}:${Date.now()}`)
     .digest('hex')
     .slice(0, 12);
+
   emit({ type: 'run.started', runId });
   emit({ type: 'stage.started', stage: 'Understanding question' });
+  if (isGreeting(input.question)) {
+    emit({ type: 'stage.completed', stage: 'Understanding question' });
+    emit({
+      type: 'run.completed',
+      answer:
+        'Hi! 👋\n\nI can help you explore your connected database with read-only queries.\n\nTry asking:\n• How many rows are in each table?\n• Show the five newest users.\n• Which columns does the users table have?',
+    });
+    return;
+  }
+
   const schema = await introspect(input.connection);
   emit({ type: 'stage.completed', stage: 'Understanding question' });
   emit({ type: 'stage.started', stage: 'Reading schema' });
   emit({ type: 'stage.completed', stage: 'Reading schema', fingerprint: schema.fingerprint });
   emit({ type: 'stage.started', stage: 'Drafting SQL' });
+
   const allowed = input.connection.allowedObjects.length
     ? input.connection.allowedObjects
     : schema.tables.map(tableName);
   const availableSchema = restrictSchema(schema, input.connection.allowedObjects);
   const pastedSql = extractPastedSql(input.question);
+
   if (pastedSql) {
     const validation = validateSql(pastedSql, input.connection.dialect, allowed);
     if (!validation.valid) throw new Error(validation.errors.join(' '));
@@ -96,6 +112,7 @@ export async function runAgent(input: AgentInput, emit: AgentEmit) {
     );
     return;
   }
+
   if (isTableListQuestion(input.question)) {
     emit({ type: 'stage.completed', stage: 'Drafting SQL' });
     emit({ type: 'stage.started', stage: 'Preparing results' });
@@ -110,24 +127,30 @@ export async function runAgent(input: AgentInput, emit: AgentEmit) {
     );
     return;
   }
+
   const draft = await createDraft(input.question, input.model, input.connection, availableSchema);
   const isDatabaseQuestion = draft.isDatabaseQuestion || looksLikeDatabaseQuestion(input.question);
+
   if (!isDatabaseQuestion) {
     emit({
       type: 'run.completed',
-      answer: `I can answer read-only questions about this connected database. Try asking about records, row counts, tables, or columns—for example, “How many rows are in each table?” ${tableHint(availableSchema)}`,
+      answer: `I can help you explore this connected database with read-only queries.\n\nTry asking:\n• How many rows are in each table?\n• Show the five newest users.\n• Which columns does the users table have?\n\n${tableHint(availableSchema)}`,
     });
     return;
   }
   if (!draft.sql.trim()) {
+    const explanation =
+      draft.explanation.trim() || 'I need a little more detail to create a safe query.';
     emit({
       type: 'run.completed',
-      answer: `${draft.explanation.trim() || 'I need a little more detail to create a safe query.'} ${tableHint(availableSchema)}`,
+      answer: `${explanation}\n\n${tableHint(availableSchema)}`,
     });
     return;
   }
+
   const validation = validateSql(draft.sql, input.connection.dialect, allowed);
   if (!validation.valid) throw new Error(validation.errors.join(' '));
+
   const safeSql = addSafetyLimit(validation.sql, input.connection.maxRows);
   emit({ type: 'stage.completed', stage: 'Drafting SQL' });
   emit({ type: 'stage.completed', stage: 'Checking read-only safety' });

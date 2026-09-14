@@ -34,13 +34,19 @@ export function looksLikeDatabaseQuestion(question: string) {
   );
 }
 
+export function isGreeting(question: string) {
+  return /^(?:hi+|hello+|hey+|namaste|good\s+(?:morning|afternoon|evening))(?:\s+there)?[!.?,\s]*$/i.test(
+    question.trim(),
+  );
+}
+
 export function tableHint(schema: SchemaSnapshot) {
   const names = schema.tables.map(
     table => `${table.schema ? `${table.schema}.` : ''}${table.name}`,
   );
-  return names.length
-    ? `Available tables: ${names.slice(0, 12).join(', ')}${names.length > 12 ? ', …' : ''}.`
-    : 'No user tables were discovered in the connected database.';
+  if (!names.length) return 'No user tables were discovered in the connected database.';
+
+  return `Available tables:\n${names.map(name => `• ${name}`).join('\n')}`;
 }
 
 export function createModel(profile: ModelProfile) {
