@@ -1,10 +1,11 @@
-import { ArrowUp, Database, Lock, Menu, Plus, ShieldCheck, Square, Trash2, X } from 'lucide-react';
+import { ArrowUp, Database, Lock, Menu, Plus, Square, Trash2, X } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import type { ChatMessage, ChatThread, StoredProfiles, Theme } from '../types';
+import type { ChatMessage, ChatThread, StoredProfiles } from '../types';
 import ChatThreadItem from './ChatThreadItem';
-import Logo from './Logo';
+import Logo from '@/features/shared/Logo';
 import Message from './Message';
-import ThemeToggle from './ThemeToggle';
+import ThemeToggle from '@/features/shared/ThemeToggle';
 
 const DIALECT_LABELS = { postgresql: 'PostgreSQL', mysql: 'MySQL', sqlite: 'SQLite' } as const;
 
@@ -16,8 +17,6 @@ const SUGGESTIONS = [
 ];
 
 export default function ChatScreen({
-  theme,
-  toggleTheme,
   profiles,
   messages,
   threads,
@@ -36,8 +35,6 @@ export default function ChatScreen({
   lockWorkspace,
   clearWorkspace,
 }: {
-  theme: Theme;
-  toggleTheme: () => void;
   profiles: StoredProfiles;
   messages: ChatMessage[];
   threads: ChatThread[];
@@ -85,7 +82,7 @@ export default function ChatScreen({
       <aside className='sidebar' data-open={sidebarOpen} aria-label='Conversations'>
         <div className='sidebar-top'>
           <div className='sidebar-brand'>
-            <Logo />
+            <Logo href='/' />
             <button
               className='icon-btn sidebar-close'
               onClick={() => setSidebarOpen(false)}
@@ -139,8 +136,21 @@ export default function ChatScreen({
               </small>
             </span>
           </div>
-          <div className='sidebar-actions'>
-            <ThemeToggle theme={theme} toggle={toggleTheme} />
+        </div>
+      </aside>
+
+      <main className='main'>
+        <header className='main-header'>
+          <button
+            className='icon-btn menu-btn'
+            onClick={() => setSidebarOpen(true)}
+            aria-label='Open sidebar'
+          >
+            <Menu size={17} />
+          </button>
+          <h1>{title}</h1>
+          <div className='header-actions'>
+            <ThemeToggle />
             <button
               className='icon-btn'
               onClick={lockWorkspace}
@@ -158,32 +168,17 @@ export default function ChatScreen({
               <Trash2 size={16} />
             </button>
           </div>
-        </div>
-      </aside>
-
-      <main className='main'>
-        <header className='main-header'>
-          <button
-            className='icon-btn menu-btn'
-            onClick={() => setSidebarOpen(true)}
-            aria-label='Open sidebar'
-          >
-            <Menu size={17} />
-          </button>
-          <h1>{title}</h1>
-          <span
-            className='main-header-meta'
-            title='Every query needs your approval and runs read-only'
-          >
-            <ShieldCheck size={14} />
-            <span>Read-only · approval required</span>
-          </span>
         </header>
 
         <div className='messages' ref={scrollRef}>
           <div className='messages-inner'>
             {isEmpty ? (
-              <div className='empty-state'>
+              <motion.div
+                className='empty-state'
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              >
                 <div>
                   <h2>Ask about {connection.name}</h2>
                   <p>
@@ -192,17 +187,20 @@ export default function ChatScreen({
                   </p>
                 </div>
                 <div className='suggestions'>
-                  {SUGGESTIONS.map(suggestion => (
-                    <button
+                  {SUGGESTIONS.map((suggestion, index) => (
+                    <motion.button
                       key={suggestion}
                       onClick={() => submitQuestion(suggestion)}
                       disabled={busy}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3, delay: 0.1 + index * 0.05 }}
                     >
                       {suggestion}
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
-              </div>
+              </motion.div>
             ) : (
               messages.map(message => (
                 <Message key={message.id} message={message} resume={resume} busy={busy} />

@@ -2,6 +2,7 @@ import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import React from 'react';
+import MotionProvider from '@/features/shared/MotionProvider';
 
 const sans = Geist({ variable: '--font-sans', subsets: ['latin'] });
 const mono = Geist_Mono({ variable: '--font-mono', subsets: ['latin'] });
@@ -22,14 +23,16 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang='en' className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
-        {/* Applies the saved theme before first paint so light mode does not flash dark. */}
+        {/* Applies the saved (or system) theme before first paint so the page never flashes. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('queryroom.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}`,
+            __html: `(function(){var t;try{t=localStorage.getItem('queryroom.theme')}catch(e){}if(t!=='light'&&t!=='dark')t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t})()`,
           }}
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <MotionProvider>{children}</MotionProvider>
+      </body>
     </html>
   );
 }

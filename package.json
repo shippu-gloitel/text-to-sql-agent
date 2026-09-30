@@ -22,7 +22,8 @@
     "========CLEANUP===================================================================================": "",
     "cleanup": "rm -rf node_modules .next *.tsbuildinfo .husky logs",
     "verify": "bun run typecheck && bun run format && bun run lint && bun run build",
-    "cid": "bun run cleanup && bun install && bun run verify"
+    "cid": "bun run cleanup && bun install && bun run verify",
+    "bun:clenaup": "bun prune && bun dedupe && bun audit"
   },
   "lint-staged": {
     "**/*.{jsx,tsx,js,cjs,mjs,ts,cts,mts,json,jsonc,md}": [
@@ -37,6 +38,7 @@
     "better-sqlite3": "^13.0.3",
     "exceljs": "^4.4.0",
     "lucide-react": "^1.49.0",
+    "motion": "^13.4.6",
     "mysql2": "^3.24.5",
     "next": "16.3.7",
     "node-sql-parser": "^5.4.0",

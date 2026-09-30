@@ -1,5 +1,6 @@
 'use client';
 
+import { AnimatePresence } from 'motion/react';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -21,7 +22,7 @@ import {
   STORAGE_KEYS,
 } from '@/lib/storage';
 import type { StreamEvent } from '@/lib/types';
-import type { ChatMessage, ChatThread, StoredProfiles, CheckState, Theme } from './types';
+import type { ChatMessage, ChatThread, StoredProfiles, CheckState } from './types';
 import {
   consumeStream,
   friendlyTestError,
@@ -67,16 +68,8 @@ export default function QueryRoom() {
   const [unlockError, setUnlockError] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [threadDeleteTarget, setThreadDeleteTarget] = useState<ChatThread | null>(null);
-  // The inline script in the root layout applies the saved theme before hydration.
-  const [theme, setTheme] = useState<Theme>(() =>
-    typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light'
-      ? 'light'
-      : 'dark',
-  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  const toggleTheme = () => setTheme(current => (current === 'dark' ? 'light' : 'dark'));
 
   const applyProfiles = useCallback(async (value: StoredProfiles & { threadsKey: string }) => {
     const savedThreads = await loadThreads(value.threadsKey);
@@ -115,15 +108,6 @@ export default function QueryRoom() {
       cancelled = true;
     };
   }, [applyProfiles]);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    try {
-      window.localStorage.setItem(STORAGE_KEYS.theme, theme);
-    } catch {
-      // Local storage may be disabled by the browser.
-    }
-  }, [theme]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -469,8 +453,6 @@ export default function QueryRoom() {
   const screen =
     vault && !profiles ? (
       <UnlockScreen
-        theme={theme}
-        toggleTheme={toggleTheme}
         passphrase={passphrase}
         setPassphrase={setPassphrase}
         unlock={unlock}
@@ -479,8 +461,6 @@ export default function QueryRoom() {
       />
     ) : profiles ? (
       <ChatScreen
-        theme={theme}
-        toggleTheme={toggleTheme}
         profiles={profiles}
         messages={messages}
         threads={threads}
@@ -501,8 +481,6 @@ export default function QueryRoom() {
       />
     ) : (
       <SetupScreen
-        theme={theme}
-        toggleTheme={toggleTheme}
         setup={setup}
         setSetup={setSetup}
         model={modelForm}
@@ -531,29 +509,33 @@ export default function QueryRoom() {
   return (
     <>
       {screen}
-      {deleteConfirmOpen && (
-        <DeleteWorkspaceModal
-          cancel={() => setDeleteConfirmOpen(false)}
-          confirm={async candidate => {
-            if (!vault || !candidate.trim()) return false;
-            try {
-              await decryptVault(vault, candidate);
-              deleteWorkspace();
-              return true;
-            } catch {
-              return false;
-            }
-          }}
-        />
-      )}
+      <AnimatePresence>
+        {deleteConfirmOpen && (
+          <DeleteWorkspaceModal
+            key='clear-workspace'
+            cancel={() => setDeleteConfirmOpen(false)}
+            confirm={async candidate => {
+              if (!vault || !candidate.trim()) return false;
+              try {
+                await decryptVault(vault, candidate);
+                deleteWorkspace();
+                return true;
+              } catch {
+                return false;
+              }
+            }}
+          />
+        )}
 
-      {threadDeleteTarget && (
-        <DeleteThreadModal
-          title={threadDeleteTarget.title}
-          cancel={() => setThreadDeleteTarget(null)}
-          confirm={deleteThread}
-        />
-      )}
+        {threadDeleteTarget && (
+          <DeleteThreadModal
+            key='delete-thread'
+            title={threadDeleteTarget.title}
+            cancel={() => setThreadDeleteTarget(null)}
+            confirm={deleteThread}
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 }

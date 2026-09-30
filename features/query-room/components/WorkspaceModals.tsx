@@ -1,3 +1,4 @@
+import { motion } from 'motion/react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { CircleAlert, LoaderCircle } from 'lucide-react';
 
@@ -19,17 +20,29 @@ function Modal({
   }, [cancel]);
 
   return (
-    <div className='modal-backdrop' role='presentation' onMouseDown={cancel}>
-      <section
+    <motion.div
+      className='modal-backdrop'
+      role='presentation'
+      onMouseDown={cancel}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+    >
+      <motion.section
         className='modal'
         role='dialog'
         aria-modal='true'
         aria-labelledby={labelledBy}
         onMouseDown={event => event.stopPropagation()}
+        initial={{ opacity: 0, scale: 0.96, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.97, y: 4 }}
+        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       >
         {children}
-      </section>
-    </div>
+      </motion.section>
+    </motion.div>
   );
 }
 

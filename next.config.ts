@@ -1,5 +1,7 @@
 import type { NextConfig } from 'next';
 
+const isDev = process.env.NODE_ENV === 'development';
+
 const nextConfig: NextConfig = {
   output: 'standalone',
   reactCompiler: true,
@@ -8,7 +10,7 @@ const nextConfig: NextConfig = {
     position: 'bottom-right',
   },
   logging: {
-    browserToTerminal: process.env.NODE_ENV === 'development',
+    browserToTerminal: isDev,
   },
   experimental: {
     typedEnv: true,

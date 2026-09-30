@@ -1,3 +1,4 @@
+import { AnimatePresence, motion } from 'motion/react';
 import dynamic from 'next/dynamic';
 import { Check, CircleAlert, Copy, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
@@ -8,6 +9,13 @@ import SqlCode from './SqlCode';
 const ResultCard = dynamic(() => import('./ResultCard'));
 
 type Resume = (assistantId: string, decision: 'approve' | 'reject' | 'edit', sql?: string) => void;
+
+const EASE = [0.22, 1, 0.36, 1] as const;
+const appear = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.25, ease: EASE },
+};
 
 export default function Message({
   message,
@@ -20,14 +28,14 @@ export default function Message({
 }) {
   if (message.role === 'user')
     return (
-      <div className='msg msg-user'>
+      <motion.div className='msg msg-user' {...appear}>
         <div className='msg-bubble'>{message.text}</div>
         <MessageActions text={message.text} />
-      </div>
+      </motion.div>
     );
 
   return (
-    <div className='msg'>
+    <motion.div className='msg' {...appear}>
       {message.running && <Progress stages={message.stages ?? []} current={message.currentStage} />}
       {message.text &&
         (message.rejected ? (
@@ -38,17 +46,24 @@ export default function Message({
         ) : (
           <div className={`msg-text ${message.stopped ? 'stopped' : ''}`}>{message.text}</div>
         ))}
-      {message.approval && (
-        <ApprovalCard
-          messageId={message.id}
-          approval={message.approval}
-          resume={resume}
-          busy={busy}
-        />
+      <AnimatePresence>
+        {message.approval && (
+          <ApprovalCard
+            key={`${message.approval.runId}-${message.approval.sql}`}
+            messageId={message.id}
+            approval={message.approval}
+            resume={resume}
+            busy={busy}
+          />
+        )}
+      </AnimatePresence>
+      {message.result && (
+        <motion.div {...appear}>
+          <ResultCard result={message.result} sql={message.sql} />
+        </motion.div>
       )}
-      {message.result && <ResultCard result={message.result} sql={message.sql} />}
       {message.text && !message.running && <MessageActions text={message.text} />}
-    </div>
+    </motion.div>
   );
 }
 
@@ -74,16 +89,26 @@ function Progress({ stages, current }: { stages: string[]; current?: string }) {
   return (
     <div className='progress' aria-live='polite'>
       {done.map(stage => (
-        <div className='progress-row done' key={stage}>
+        <motion.div
+          className='progress-row done'
+          key={stage}
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+        >
           <Check size={14} />
           {stage}
-        </div>
+        </motion.div>
       ))}
       {current && (
-        <div className='progress-row current'>
+        <motion.div
+          className='progress-row current'
+          key={current}
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+        >
           <LoaderCircle className='spin' size={14} />
           {current}…
-        </div>
+        </motion.div>
       )}
     </div>
   );
@@ -106,7 +131,15 @@ function ApprovalCard({
   const hasErrors = approval.errors.length > 0;
 
   return (
-    <section className='card approval-card' aria-label='Query approval'>
+    <motion.section
+      className='card approval-card'
+      style={{ overflow: 'hidden' }}
+      aria-label='Query approval'
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.25, ease: EASE }}
+    >
       <div className='card-header'>
         <span className='card-title'>
           <ShieldCheck size={15} />
@@ -138,7 +171,12 @@ function ApprovalCard({
           <SqlCode sql={approval.sql} />
         )}
         {hasErrors ? (
-          <div className='callout-error approval-errors' role='alert'>
+          <motion.div
+            className='callout-error approval-errors'
+            role='alert'
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
             <CircleAlert size={15} />
             <div>
               This SQL did not pass the safety check:
@@ -149,7 +187,7 @@ function ApprovalCard({
               </ul>
               Edit it again to fix the problem, or reject it.
             </div>
-          </div>
+          </motion.div>
         ) : (
           approval.tables.length > 0 && (
             <div className='meta-row'>
@@ -209,6 +247,6 @@ function ApprovalCard({
           </>
         )}
       </div>
-    </section>
+    </motion.section>
   );
 }

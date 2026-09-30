@@ -2,8 +2,6 @@ import type { ConnectionProfile, ModelProfile, QueryResult } from '@/lib/types';
 
 export type CheckState = 'idle' | 'testing' | 'success' | 'error';
 
-export type Theme = 'dark' | 'light';
-
 export type SetupForm = {
   name: string;
   description: string;

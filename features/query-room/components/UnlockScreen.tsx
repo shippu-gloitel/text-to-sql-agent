@@ -1,19 +1,15 @@
+import { motion } from 'motion/react';
 import { CircleAlert } from 'lucide-react';
-import type { Theme } from '../types';
-import Logo from './Logo';
-import ThemeToggle from './ThemeToggle';
+import Logo from '@/features/shared/Logo';
+import ThemeToggle from '@/features/shared/ThemeToggle';
 
 export default function UnlockScreen({
-  theme,
-  toggleTheme,
   passphrase,
   setPassphrase,
   unlock,
   clearWorkspace,
   error,
 }: {
-  theme: Theme;
-  toggleTheme: () => void;
   passphrase: string;
   setPassphrase: (value: string) => void;
   unlock: () => void;
@@ -22,16 +18,19 @@ export default function UnlockScreen({
 }) {
   return (
     <main className='center'>
-      <form
+      <motion.form
         className='auth-card'
+        initial={{ opacity: 0, y: 12, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
         onSubmit={event => {
           event.preventDefault();
           unlock();
         }}
       >
         <div className='auth-card-head'>
-          <Logo />
-          <ThemeToggle theme={theme} toggle={toggleTheme} />
+          <Logo href='/' />
+          <ThemeToggle />
         </div>
         <div>
           <h1>Unlock workspace</h1>
@@ -64,7 +63,7 @@ export default function UnlockScreen({
             Clear this workspace
           </button>
         </p>
-      </form>
+      </motion.form>
     </main>
   );
 }

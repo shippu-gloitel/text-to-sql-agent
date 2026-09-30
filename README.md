@@ -11,8 +11,9 @@ cp .env.example .env.local   # optional settings, see below
 bun dev
 ```
 
-Open <http://localhost:3000>, enter the database and model details, test both connections, and
-choose a passphrase. Connection details and chat history are encrypted in your browser with that
+Open <http://localhost:3000> for the product overview, or go straight to
+<http://localhost:3000/workspace>. Enter the database and model details, test both connections,
+and choose a passphrase. Connection details and chat history are encrypted in your browser with that
 passphrase.
 
 ## How a question is answered
@@ -70,8 +71,11 @@ localhost, but set all three before exposing the app to anyone else.
 ## Project layout
 
 ```
+app/                Pages: home (/) and workspace (/workspace)
 app/api/            Route handlers (agent run/resume, health checks, schema)
-features/query-room UI: setup, unlock and chat screens
+features/home       Home page and animated product demo
+features/query-room Workspace UI: setup, unlock and chat screens
+features/shared     Logo, theme store and toggle, motion settings
 lib/security/       SQL policy and browser vault encryption
 lib/server/agent/   LangGraph approval graph, prompts, model calls
 lib/server/db.ts    Database drivers, schema introspection, read-only execution

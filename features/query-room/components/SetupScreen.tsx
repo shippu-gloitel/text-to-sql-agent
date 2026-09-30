@@ -8,12 +8,15 @@ import {
   EyeOff,
   LoaderCircle,
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
-import type { CheckState, ModelForm, SetupForm, Theme } from '../types';
-import Logo from './Logo';
-import ThemeToggle from './ThemeToggle';
+import type { CheckState, ModelForm, SetupForm } from '../types';
+import Logo from '@/features/shared/Logo';
+import ThemeToggle from '@/features/shared/ThemeToggle';
 
 type CheckResult = { state: CheckState; message?: string; details?: string };
+
+const EASE = [0.22, 1, 0.36, 1] as const;
 
 const dialects = [
   { value: 'postgresql', label: 'PostgreSQL', port: '5432' },
@@ -22,8 +25,6 @@ const dialects = [
 ] as const;
 
 export default function SetupScreen(props: {
-  theme: Theme;
-  toggleTheme: () => void;
   setup: SetupForm;
   setSetup: Dispatch<SetStateAction<SetupForm>>;
   model: ModelForm;
@@ -65,12 +66,17 @@ export default function SetupScreen(props: {
   return (
     <main className='setup'>
       <header className='setup-header'>
-        <Logo />
-        <ThemeToggle theme={props.theme} toggle={props.toggleTheme} />
+        <Logo href='/' />
+        <ThemeToggle />
       </header>
 
       <div className='setup-body'>
-        <aside className='setup-intro'>
+        <motion.aside
+          className='setup-intro'
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: EASE }}
+        >
           <h1>Set up your workspace</h1>
           <p>
             Connect a database and a model. The agent drafts SQL for your questions, and nothing
@@ -86,10 +92,16 @@ export default function SetupScreen(props: {
               detail='Encrypts everything saved in this browser'
             />
           </ol>
-        </aside>
+        </motion.aside>
 
         <div className='setup-forms'>
-          <section className='panel' aria-labelledby='database-heading'>
+          <motion.section
+            className='panel'
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.05, ease: EASE }}
+            aria-labelledby='database-heading'
+          >
             <div className='panel-header'>
               <h2 id='database-heading'>Database</h2>
               <p>Use a database user with read-only permissions.</p>
@@ -273,9 +285,15 @@ export default function SetupScreen(props: {
                 </button>
               </div>
             </div>
-          </section>
+          </motion.section>
 
-          <section className='panel' aria-labelledby='model-heading'>
+          <motion.section
+            className='panel'
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.12, ease: EASE }}
+            aria-labelledby='model-heading'
+          >
             <div className='panel-header'>
               <h2 id='model-heading'>Model</h2>
               <p>Any OpenAI-compatible chat model that supports tool calling.</p>
@@ -348,9 +366,15 @@ export default function SetupScreen(props: {
                 </button>
               </div>
             </div>
-          </section>
+          </motion.section>
 
-          <section className='panel' aria-labelledby='vault-heading'>
+          <motion.section
+            className='panel'
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.19, ease: EASE }}
+            aria-labelledby='vault-heading'
+          >
             <div className='panel-header'>
               <h2 id='vault-heading'>Passphrase</h2>
               <p>
@@ -386,7 +410,7 @@ export default function SetupScreen(props: {
                 </button>
               </div>
             </div>
-          </section>
+          </motion.section>
         </div>
       </div>
     </main>
@@ -406,7 +430,20 @@ function Step({
 }) {
   return (
     <li data-done={done}>
-      <span className='step-dot'>{done ? <Check size={12} strokeWidth={3} /> : index}</span>
+      <span className='step-dot'>
+        <AnimatePresence mode='wait' initial={false}>
+          <motion.span
+            key={done ? 'done' : 'todo'}
+            style={{ display: 'grid' }}
+            initial={{ scale: 0.4, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.4, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 500, damping: 28 }}
+          >
+            {done ? <Check size={12} strokeWidth={3} /> : index}
+          </motion.span>
+        </AnimatePresence>
+      </span>
       <span>
         <strong>{title}</strong>
         {detail && <small>{detail}</small>}

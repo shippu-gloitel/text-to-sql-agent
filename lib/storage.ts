@@ -7,7 +7,6 @@ export const STORAGE_KEYS = {
   settings: 'tsql.v1.settings',
   // Encrypted with the workspace data key (see `StoredProfiles.threadsKey`).
   threads: 'tsql.v3.threads',
-  theme: 'queryroom.theme',
 } as const;
 
 // Plaintext chat history from earlier versions; migrated into encrypted storage on unlock.
@@ -71,7 +70,5 @@ export function removeStorage(key: string) {
 }
 
 export function clearAppStorage() {
-  [...Object.values(STORAGE_KEYS), ...Object.values(LEGACY_STORAGE_KEYS)]
-    .filter(key => key !== STORAGE_KEYS.theme)
-    .forEach(removeStorage);
+  [...Object.values(STORAGE_KEYS), ...Object.values(LEGACY_STORAGE_KEYS)].forEach(removeStorage);
 }
