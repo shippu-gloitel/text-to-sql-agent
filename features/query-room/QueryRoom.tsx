@@ -2,7 +2,7 @@
 
 import { AnimatePresence } from 'motion/react';
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import {
   decryptSessionVault,
   decryptVault,
@@ -71,14 +71,17 @@ export default function QueryRoom() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const applyProfiles = useCallback(async (value: StoredProfiles & { threadsKey: string }) => {
+  const applyProfiles = async (value: StoredProfiles & { threadsKey: string }) => {
     const savedThreads = await loadThreads(value.threadsKey);
     const activeThread = [...savedThreads].sort((a, b) => b.updatedAt - a.updatedAt)[0];
     setThreads(savedThreads);
     setThreadId(activeThread?.id ?? `thread-${crypto.randomUUID()}`);
     setMessages(activeThread?.messages ?? []);
     setProfiles(value);
-  }, []);
+  };
+
+  // Lets the mount-only restore effect call the latest applyProfiles without re-running.
+  const restoreProfiles = useEffectEvent(applyProfiles);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,7 +96,7 @@ export default function QueryRoom() {
             // Workspaces saved before chat history was encrypted must be unlocked once to upgrade.
             if (!restored.threadsKey) clearSessionVault();
             else if (!cancelled)
-              await applyProfiles({ ...restored, threadsKey: restored.threadsKey });
+              await restoreProfiles({ ...restored, threadsKey: restored.threadsKey });
           } catch {
             clearSessionVault();
           }
@@ -107,7 +110,7 @@ export default function QueryRoom() {
     return () => {
       cancelled = true;
     };
-  }, [applyProfiles]);
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
