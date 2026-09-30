@@ -17,8 +17,9 @@ passphrase.
 
 ## How a question is answered
 
-1. The server reads the database schema (cached for one minute) and sends it with your question
-   to the model (any OpenAI-compatible endpoint).
+1. The server reads the database schema (cached for one minute) and sends it, along with your
+   question and the optional database description from setup, to the model (any
+   OpenAI-compatible endpoint).
 2. The draft SQL goes through the safety check in `lib/security/sql-policy.ts`. If it fails, the
    model gets the errors and up to two attempts to correct it.
 3. You see the SQL and approve, edit or reject it. Edited SQL is checked again, and problems are

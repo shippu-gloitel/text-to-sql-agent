@@ -46,5 +46,3 @@ export const AgentState = new StateSchema({
   decision: agentDecisionSchema.optional(),
   result: z.custom<QueryResult>().optional(),
 });
-
-export type AgentStateType = typeof AgentState.State;

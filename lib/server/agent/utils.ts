@@ -4,6 +4,7 @@ import {
   modelProfileSchema,
   type ConnectionProfile,
   type ModelProfile,
+  type QueryResult,
   type SchemaSnapshot,
 } from '../../types';
 import { matchesAllowedObject } from '../../security/sql-policy';
@@ -160,6 +161,26 @@ export function isRowCountQuestion(question: string) {
   return asksCount && aboutRows && everyTable;
 }
 
+type CatalogRow = Record<string, unknown> & { schema: string | null };
+
+/** Builds a catalog result, leaving out the schema column when no table has one (SQLite). */
+function catalogResult(
+  rows: CatalogRow[],
+  columns: QueryResult['columns'],
+  maxRows: number,
+  maxResponseBytes: number,
+) {
+  if (rows.some(row => row.schema !== null))
+    return boundRows(rows, columns, maxRows, maxResponseBytes, 0);
+  return boundRows(
+    rows.map(row => Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'schema'))),
+    columns.filter(column => column.name !== 'schema'),
+    maxRows,
+    maxResponseBytes,
+    0,
+  );
+}
+
 export function rowCountResult(
   counts: TableRowCount[],
   allowedObjects: string[],
@@ -176,7 +197,7 @@ export function rowCountResult(
       )
     : counts;
   const rowsColumn = estimated ? 'estimated_rows' : 'rows';
-  return boundRows(
+  return catalogResult(
     visible.map(count => ({ schema: count.schema, table: count.table, [rowsColumn]: count.rows })),
     [
       { name: 'schema', type: 'text' },
@@ -185,7 +206,6 @@ export function rowCountResult(
     ],
     maxRows,
     maxResponseBytes,
-    0,
   );
 }
 
@@ -199,7 +219,7 @@ export function tableCatalogResult(
     table: table.name,
     columns: table.columns.map(column => column.name).join(', '),
   }));
-  return boundRows(
+  return catalogResult(
     allRows,
     [
       { name: 'schema', type: 'text' },
@@ -208,7 +228,6 @@ export function tableCatalogResult(
     ],
     maxRows,
     maxResponseBytes,
-    0,
   );
 }
 

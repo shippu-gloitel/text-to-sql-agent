@@ -43,12 +43,6 @@ export const initialModel: ModelForm = {
   temperature: '0',
 };
 
-export const defaultMessage: ChatMessage = {
-  id: 'welcome',
-  role: 'assistant',
-  text: 'Ask for a read-only view of your connected data. Try “How many rows are in each table?”, “Show the five newest users”, or “Which columns does the users table have?” Every generated query waits for your approval before it runs.',
-};
-
 export function threadTitle(messages: ChatMessage[]) {
   const question = messages.find(message => message.role === 'user')?.text?.trim();
   if (!question) return 'New conversation';
@@ -57,7 +51,7 @@ export function threadTitle(messages: ChatMessage[]) {
   return compact.length > 58 ? `${compact.slice(0, 58)}…` : compact;
 }
 
-export function isChatThread(value: unknown): value is ChatThread {
+function isChatThread(value: unknown): value is ChatThread {
   if (!value || typeof value !== 'object') return false;
   const thread = value as Partial<ChatThread>;
   return (
@@ -111,6 +105,16 @@ function readLegacyThreadList(): ChatThread[] {
   ];
 }
 
+// Older versions saved a static welcome message and empty placeholder conversations.
+function tidyThreads(threads: ChatThread[]) {
+  return threads
+    .map(thread => ({
+      ...thread,
+      messages: thread.messages.filter(message => message.id !== 'welcome'),
+    }))
+    .filter(thread => thread.messages.some(message => message.role === 'user'));
+}
+
 /**
  * Loads encrypted chat history. Plaintext history from older versions is migrated into encrypted
  * storage once and then removed.
@@ -120,13 +124,13 @@ export async function loadThreads(threadsKey: string): Promise<ChatThread[]> {
   if (envelope) {
     try {
       const threads = await decryptWithDataKey<unknown>(envelope, threadsKey);
-      return Array.isArray(threads) ? threads.filter(isChatThread) : [];
+      return Array.isArray(threads) ? tidyThreads(threads.filter(isChatThread)) : [];
     } catch {
       return [];
     }
   }
 
-  const legacy = readLegacyThreads();
+  const legacy = tidyThreads(readLegacyThreads());
   if (legacy.length && (await saveThreads(legacy, threadsKey))) {
     Object.values(LEGACY_STORAGE_KEYS).forEach(removeStorage);
   }
@@ -268,7 +272,7 @@ export function formatCell(value: unknown) {
   return String(value);
 }
 
-export function downloadBlob(blob: Blob, filename: string) {
+function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

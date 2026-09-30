@@ -70,6 +70,18 @@ describe('row count questions', () => {
     ]);
     expect(result.rows).toEqual([{ schema: 'public', table: 'users', estimated_rows: 5000 }]);
   });
+
+  test('drops the schema column when no table has a schema', () => {
+    const result = rowCountResult(
+      [{ schema: null, table: 'users', rows: 3 }],
+      [],
+      false,
+      100,
+      100_000,
+    );
+    expect(result.columns.map(column => column.name)).toEqual(['table', 'rows']);
+    expect(result.rows).toEqual([{ table: 'users', rows: 3 }]);
+  });
 });
 
 describe('restrictSchema', () => {

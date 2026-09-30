@@ -255,10 +255,7 @@ function emitResult(result: QueryResult | undefined, emit: AgentEmit, answer?: s
   emit({ type: 'result.completed', result });
   emit({
     type: 'run.completed',
-    answer: answer
-      ? answer
-      : result.rowCount
-        ? `Returned ${result.rowCount} row${result.rowCount === 1 ? '' : 's'} from the database.${result.truncated ? ' The result was truncated to the configured row or size limit.' : ''}`
-        : 'The query returned no rows.',
+    // The result card already shows the row count, so only add text that says something new.
+    answer: answer ?? (result.rowCount ? '' : 'The query returned no rows.'),
   });
 }

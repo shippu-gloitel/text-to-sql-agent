@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
-export const dialectSchema = z.enum(['postgresql', 'mysql', 'sqlite']);
-export type Dialect = z.infer<typeof dialectSchema>;
+export type Dialect = 'postgresql' | 'mysql' | 'sqlite';
 
 const sharedConnection = {
   name: z.string().min(1).max(80),
@@ -50,27 +49,22 @@ export const modelProfileSchema = z.object({
 });
 export type ModelProfile = z.infer<typeof modelProfileSchema>;
 
-export const schemaSnapshotSchema = z.object({
-  tables: z.array(
-    z.object({
-      name: z.string(),
-      schema: z.string().optional(),
-      columns: z.array(z.object({ name: z.string(), type: z.string() })),
-    }),
-  ),
-  relationships: z.array(
-    z.object({
-      fromSchema: z.string().optional(),
-      fromTable: z.string(),
-      fromColumn: z.string(),
-      toSchema: z.string().optional(),
-      toTable: z.string(),
-      toColumn: z.string(),
-    }),
-  ),
-  fingerprint: z.string(),
-});
-export type SchemaSnapshot = z.infer<typeof schemaSnapshotSchema>;
+export type SchemaSnapshot = {
+  tables: Array<{
+    name: string;
+    schema?: string;
+    columns: Array<{ name: string; type: string }>;
+  }>;
+  relationships: Array<{
+    fromSchema?: string;
+    fromTable: string;
+    fromColumn: string;
+    toSchema?: string;
+    toTable: string;
+    toColumn: string;
+  }>;
+  fingerprint: string;
+};
 
 export const runRequestSchema = z.object({
   question: z.string().trim().min(2).max(20000),

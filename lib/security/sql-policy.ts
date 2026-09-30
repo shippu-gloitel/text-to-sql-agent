@@ -40,7 +40,7 @@ type SelectAst = AstNode & {
  * unwrapped for function checks (so `"pg_sleep"(1)` is still caught) and blanked for keyword checks
  * (so a column named "delete" is allowed), and comments are reported instead of copied.
  */
-export function maskSql(sql: string, dialect?: Dialect) {
+function maskSql(sql: string, dialect?: Dialect) {
   let keywordText = '';
   let functionText = '';
   let hasComment = false;

@@ -24,7 +24,6 @@ import type { StreamEvent } from '@/lib/types';
 import type { ChatMessage, ChatThread, StoredProfiles, CheckState, Theme } from './types';
 import {
   consumeStream,
-  defaultMessage,
   friendlyTestError,
   initialModel,
   initialSetup,
@@ -60,7 +59,7 @@ export default function QueryRoom() {
     message?: string;
     details?: string;
   }>({ state: 'idle' });
-  const [messages, setMessages] = useState<ChatMessage[]>([defaultMessage]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [question, setQuestion] = useState('');
   const [threadId, setThreadId] = useState('');
@@ -84,7 +83,7 @@ export default function QueryRoom() {
     const activeThread = [...savedThreads].sort((a, b) => b.updatedAt - a.updatedAt)[0];
     setThreads(savedThreads);
     setThreadId(activeThread?.id ?? `thread-${crypto.randomUUID()}`);
-    setMessages(activeThread?.messages.length ? activeThread.messages : [defaultMessage]);
+    setMessages(activeThread?.messages ?? []);
     setProfiles(value);
   }, []);
 
@@ -285,7 +284,7 @@ export default function QueryRoom() {
     setProfiles(null);
     setPassphrase('');
     setThreads([]);
-    setMessages([defaultMessage]);
+    setMessages([]);
     setDbCheck({ state: 'idle' });
     setModelCheck({ state: 'idle' });
   };
@@ -299,20 +298,9 @@ export default function QueryRoom() {
 
   const startNewThread = () => {
     if (busy) return;
-    const id = `thread-${crypto.randomUUID()}`;
-    const timestamp = Date.now();
-    setThreads(current => [
-      {
-        id,
-        title: 'New conversation',
-        messages: [defaultMessage],
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      },
-      ...current,
-    ]);
-    setThreadId(id);
-    setMessages([defaultMessage]);
+    // The conversation is added to the list once its first question is asked.
+    setThreadId(`thread-${crypto.randomUUID()}`);
+    setMessages([]);
     setQuestion('');
   };
 
@@ -344,7 +332,7 @@ export default function QueryRoom() {
     setThreads(current => current.filter(thread => thread.id !== deletedId));
     if (deletedId === threadId) {
       setThreadId(`thread-${crypto.randomUUID()}`);
-      setMessages([defaultMessage]);
+      setMessages([]);
       setQuestion('');
     }
     setThreadDeleteTarget(null);
@@ -426,9 +414,9 @@ export default function QueryRoom() {
 
   const stopRun = () => abortRef.current?.abort();
 
-  const submitQuestion = async () => {
-    if (!profiles || !threadId || !question.trim() || busy) return;
-    const userText = question.trim();
+  const submitQuestion = async (text = question) => {
+    const userText = text.trim();
+    if (!profiles || !threadId || !userText || busy) return;
     const assistantId = `assistant-${crypto.randomUUID()}`;
     setQuestion('');
     setBusy(true);
@@ -476,7 +464,7 @@ export default function QueryRoom() {
 
     await streamRun('/api/agent/resume', { threadId, runId, decision, sql }, assistantId);
   };
-  if (!hydrated) return <div className='loading-screen'>Loading workspace…</div>;
+  if (!hydrated) return <div className='loading'>Loading…</div>;
 
   const screen =
     vault && !profiles ? (

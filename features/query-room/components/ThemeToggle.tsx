@@ -2,17 +2,10 @@ import { Moon, Sun } from 'lucide-react';
 import type { Theme } from '../types';
 
 export default function ThemeToggle({ theme, toggle }: { theme: Theme; toggle: () => void }) {
-  const lightMode = theme === 'light';
+  const label = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
   return (
-    <button
-      className='theme-toggle'
-      onClick={toggle}
-      aria-label={lightMode ? 'Switch to dark theme' : 'Switch to light theme'}
-      aria-pressed={lightMode}
-      title={lightMode ? 'Switch to dark theme' : 'Switch to light theme'}
-    >
-      {lightMode ? <Moon size={15} /> : <Sun size={15} />}
-      <span>{lightMode ? 'Dark' : 'Light'}</span>
+    <button className='icon-btn theme-toggle' onClick={toggle} aria-label={label} title={label}>
+      {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
     </button>
   );
 }

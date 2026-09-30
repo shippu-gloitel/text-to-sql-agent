@@ -1,4 +1,4 @@
-import { Check, MessageSquare, Pencil, Trash2, X } from 'lucide-react';
+import { Check, Pencil, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import type { ChatThread } from '../types';
 
@@ -23,7 +23,7 @@ export default function ChatThreadItem({
   if (editing)
     return (
       <form
-        className='thread-edit-form'
+        className='thread-edit'
         onSubmit={event => {
           event.preventDefault();
           rename(thread.id, draft);
@@ -31,17 +31,19 @@ export default function ChatThreadItem({
         }}
       >
         <input
+          className='input'
           value={draft}
           onChange={event => setDraft(event.target.value)}
+          onKeyDown={event => event.key === 'Escape' && setEditing(false)}
           aria-label='Conversation name'
           autoFocus
         />
-        <button type='submit' className='thread-action' aria-label='Save conversation name'>
+        <button type='submit' className='icon-btn' aria-label='Save name'>
           <Check size={14} />
         </button>
         <button
           type='button'
-          className='thread-action'
+          className='icon-btn'
           onClick={() => setEditing(false)}
           aria-label='Cancel rename'
         >
@@ -57,34 +59,29 @@ export default function ChatThreadItem({
         onClick={() => select(thread.id)}
         disabled={disabled}
         title={thread.title}
+        aria-current={active ? 'page' : undefined}
       >
-        <MessageSquare size={15} />
-        <span className='thread-copy'>
-          <strong>{thread.title}</strong>
-          <small>
-            {thread.messages.filter(message => message.role === 'user').length} questions
-          </small>
-        </span>
+        {thread.title}
       </button>
       <div className='thread-actions'>
         <button
-          className='thread-action'
+          className='icon-btn'
           onClick={() => {
             setDraft(thread.title);
             setEditing(true);
           }}
           disabled={disabled}
           aria-label={`Rename ${thread.title}`}
-          title='Rename conversation'
+          title='Rename'
         >
           <Pencil size={13} />
         </button>
         <button
-          className='thread-action delete-thread-action'
+          className='icon-btn danger'
           onClick={() => requestDelete(thread.id)}
           disabled={disabled}
           aria-label={`Delete ${thread.title}`}
-          title='Delete conversation'
+          title='Delete'
         >
           <Trash2 size={13} />
         </button>

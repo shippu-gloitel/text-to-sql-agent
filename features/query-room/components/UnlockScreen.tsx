@@ -1,5 +1,6 @@
-import { CircleAlert, Lock, Trash2, Unlock } from 'lucide-react';
+import { CircleAlert } from 'lucide-react';
 import type { Theme } from '../types';
+import Logo from './Logo';
 import ThemeToggle from './ThemeToggle';
 
 export default function UnlockScreen({
@@ -20,47 +21,50 @@ export default function UnlockScreen({
   error: string;
 }) {
   return (
-    <main className='center-stage'>
-      <div className='unlock-card'>
-        <div className='unlock-head'>
-          <div className='brand-mark'>
-            <Lock size={18} />
-          </div>
+    <main className='center'>
+      <form
+        className='auth-card'
+        onSubmit={event => {
+          event.preventDefault();
+          unlock();
+        }}
+      >
+        <div className='auth-card-head'>
+          <Logo />
           <ThemeToggle theme={theme} toggle={toggleTheme} />
         </div>
-        <p className='eyebrow'>Encrypted workspace</p>
-        <h1>Welcome back.</h1>
-        <p className='muted'>Unlock your local database and model profiles to continue.</p>
-        <label className='field-label' htmlFor='unlock-passphrase'>
-          Vault passphrase
-        </label>
-        <div className='input-wrap'>
-          <Lock size={16} />
+        <div>
+          <h1>Unlock workspace</h1>
+          <p className='muted'>Enter your passphrase to decrypt your connections and history.</p>
+        </div>
+        <label className='field'>
+          <span className='field-label'>Passphrase</span>
           <input
-            id='unlock-passphrase'
+            className='input'
             type='password'
             value={passphrase}
             onChange={event => setPassphrase(event.target.value)}
-            onKeyDown={event => event.key === 'Enter' && unlock()}
             placeholder='Enter your passphrase'
+            autoComplete='current-password'
             autoFocus
           />
-        </div>
+        </label>
         {error && (
-          <p className='error-line'>
-            <CircleAlert size={15} />
+          <p className='error-text' role='alert'>
+            <CircleAlert size={14} />
             {error}
           </p>
         )}
-        <button className='primary-button full-width' onClick={unlock}>
-          <Unlock size={16} />
-          Unlock workspace
+        <button type='submit' className='btn btn-primary btn-block' disabled={!passphrase}>
+          Unlock
         </button>
-        <button className='text-button danger-text-button' onClick={clearWorkspace}>
-          <Trash2 size={14} />
-          Clear this workspace
-        </button>
-      </div>
+        <p className='auth-card-foot'>
+          Forgot your passphrase?{' '}
+          <button type='button' className='link-btn' onClick={clearWorkspace}>
+            Clear this workspace
+          </button>
+        </p>
+      </form>
     </main>
   );
 }
