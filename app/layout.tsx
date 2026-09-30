@@ -15,13 +15,18 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#ffffff' },
-    { media: '(prefers-color-scheme: dark)', color: '#0b0b0c' },
+    { media: '(prefers-color-scheme: dark)', color: '#0a1011' },
   ],
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang='en' className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html
+      lang='en'
+      className={`${sans.variable} ${mono.variable}`}
+      data-scroll-behavior='smooth'
+      suppressHydrationWarning
+    >
       <head>
         {/* Applies the saved (or system) theme before first paint so the page never flashes. */}
         <script

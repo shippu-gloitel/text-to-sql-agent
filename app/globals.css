@@ -3,24 +3,29 @@
 /* ───────────────────────── Tokens ───────────────────────── */
 
 :root {
-  --bg: #0b0b0c;
-  --bg-subtle: #101012;
-  --surface: #141416;
-  --surface-2: #1b1b1e;
-  --surface-3: #232327;
-  --border: #242428;
-  --border-strong: #34343a;
-  --text: #ededef;
-  --text-2: #a1a1aa;
-  --text-3: #80808a;
-  --accent: #5b8def;
-  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
-  --success: #3fb97a;
-  --warning: #d9a13b;
-  --danger: #f26d6d;
+  /* Palette: ButterCMS starter teal (#37c2cc) and its tints, with a teal-tinted dark mode. */
+  --bg: #0a1011;
+  --bg-subtle: #0e1618;
+  --surface: #111b1d;
+  --surface-2: #172427;
+  --surface-3: #1f2f32;
+  --border: #1e2c2f;
+  --border-strong: #2c4044;
+  --text: #e6f4f5;
+  --text-2: #a4b9bb;
+  --text-3: #7f979a;
+  --accent: #37c2cc;
+  --accent-text: #37c2cc;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --hero-tint: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  --icon-bg: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  --success: #75b798;
+  --warning: #ffda6a;
+  --danger: #ea868f;
+  --danger-fg: #2c0b0e;
   --danger-soft: color-mix(in srgb, var(--danger) 10%, transparent);
-  --primary-bg: #ededef;
-  --primary-fg: #0b0b0c;
+  --primary-bg: #37c2cc;
+  --primary-fg: #05292c;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
   --shadow-lg: 0 24px 60px -12px rgb(0 0 0 / 0.6), 0 0 0 1px var(--border);
   --radius-sm: 6px;
@@ -33,21 +38,25 @@
 
 :root[data-theme='light'] {
   --bg: #ffffff;
-  --bg-subtle: #fafafa;
+  --bg-subtle: #f1feff;
   --surface: #ffffff;
-  --surface-2: #f4f4f5;
-  --surface-3: #e9e9ec;
-  --border: #e4e4e7;
-  --border-strong: #d4d4d8;
-  --text: #09090b;
-  --text-2: #52525b;
-  --text-3: #71717a;
-  --accent: #2563eb;
-  --success: #15803d;
-  --warning: #b45309;
-  --danger: #dc2626;
-  --primary-bg: #18181b;
-  --primary-fg: #fafafa;
+  --surface-2: #e3fdff;
+  --surface-3: #d5f1f3;
+  --border: #dee2e6;
+  --border-strong: #ced4da;
+  --text: #1a1a1a;
+  --text-2: #4d4d4d;
+  --text-3: #626a72;
+  --accent: #37c2cc;
+  --accent-text: #117a82;
+  --hero-tint: #c2fbff;
+  --icon-bg: #d5f1f3;
+  --success: #198754;
+  --warning: #664d03;
+  --danger: #b02a37;
+  --danger-fg: #ffffff;
+  --primary-bg: #37c2cc;
+  --primary-fg: #05292c;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.05);
   --shadow-lg: 0 24px 60px -12px rgb(0 0 0 / 0.18), 0 0 0 1px var(--border);
   color-scheme: light;
@@ -91,7 +100,7 @@ button:disabled {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-text);
   outline-offset: 2px;
 }
 
@@ -208,7 +217,7 @@ a.btn {
 
 .btn-danger {
   background: var(--danger);
-  color: #fff;
+  color: var(--danger-fg);
 }
 
 .btn-danger:not(:disabled):hover {
@@ -310,7 +319,7 @@ textarea.input {
 
 .input:focus,
 .input-group:focus-within {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -602,9 +611,9 @@ textarea.input {
 }
 
 .steps li[data-done='true'] .step-dot {
-  border-color: var(--success);
-  background: var(--success);
-  color: var(--bg);
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--primary-fg);
 }
 
 .steps strong {
@@ -1056,7 +1065,7 @@ textarea.input {
 }
 
 .composer:focus-within {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -1275,12 +1284,12 @@ textarea.code {
 }
 
 textarea.code:focus {
-  border-color: var(--accent);
+  border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .sql-keyword {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .sql-string {
@@ -1562,7 +1571,7 @@ html:has(.home) {
 .home-links a:hover,
 .home-footer nav a:hover {
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--accent-text);
 }
 
 .home-nav-actions {
@@ -1578,6 +1587,7 @@ html:has(.home) {
 .hero {
   position: relative;
   padding: 72px 0 96px;
+  background: linear-gradient(180deg, var(--hero-tint), transparent 90%);
 }
 
 .hero-grid {
@@ -1667,7 +1677,7 @@ html:has(.home) {
 }
 
 .hero-facts svg {
-  color: var(--success);
+  color: var(--accent-text);
 }
 
 .hero-demo {
@@ -1902,10 +1912,17 @@ html:has(.home) {
   width: 34px;
   height: 34px;
   place-items: center;
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--surface-2);
-  color: var(--text);
+  background: var(--icon-bg);
+  color: var(--accent-text);
+  transition:
+    background 150ms,
+    color 150ms;
+}
+
+.feature-card:hover .feature-icon {
+  background: var(--accent);
+  color: var(--primary-fg);
 }
 
 .security-grid {
@@ -1966,8 +1983,8 @@ html:has(.home) {
   height: 28px;
   place-items: center;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--success) 14%, transparent);
-  color: var(--success);
+  background: var(--icon-bg);
+  color: var(--accent-text);
 }
 
 .faq-container {
