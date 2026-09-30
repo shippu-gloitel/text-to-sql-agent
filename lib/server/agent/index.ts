@@ -255,7 +255,7 @@ function emitResult(result: QueryResult | undefined, emit: AgentEmit, answer?: s
   emit({ type: 'result.completed', result });
   emit({
     type: 'run.completed',
-    // The result card already shows the row count, so only add text that says something new.
-    answer: answer ?? (result.rowCount ? '' : 'The query returned no rows.'),
+    // The result card shows the row count (and says when there are none), so only add new text.
+    answer: answer ?? '',
   });
 }

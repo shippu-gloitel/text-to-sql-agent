@@ -1045,7 +1045,7 @@ textarea.input {
 }
 
 .composer-area {
-  padding: 0 24px 16px;
+  padding: 0 24px max(16px, env(safe-area-inset-bottom));
 }
 
 .composer {
@@ -1124,6 +1124,12 @@ kbd {
   position: relative;
   display: grid;
   gap: 12px;
+  min-width: 0;
+}
+
+/* Grid items default to min-width: auto; without this a wide table widens the whole column. */
+.msg > *,
+.messages-inner > * {
   min-width: 0;
 }
 
@@ -1478,6 +1484,20 @@ textarea.code:focus {
   font-size: 12px;
 }
 
+.result-empty {
+  justify-content: center;
+  padding: 20px 14px;
+}
+
+.fullscreen-backdrop .table-wrap:has(+ .result-empty) {
+  flex: none;
+}
+
+.fullscreen-backdrop .result-empty {
+  flex: 1;
+  align-items: flex-start;
+}
+
 .result-sql {
   padding: 14px;
 }
@@ -1607,6 +1627,10 @@ html:has(.home) {
   position: relative;
   display: grid;
   gap: 56px;
+}
+
+.hero-inner > * {
+  min-width: 0;
 }
 
 .hero-copy {
@@ -1769,8 +1793,10 @@ html:has(.home) {
 
 .demo-input {
   flex: 1;
+  min-width: 0;
   min-height: 24px;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -2265,6 +2291,78 @@ html:has(.home) {
 
   .empty-state {
     margin-top: 4vh;
+  }
+}
+
+/* Large displays: use more of the width for tables and SQL. */
+@media (min-width: 1680px) {
+  .messages-inner,
+  .composer,
+  .composer-hint {
+    max-width: 960px;
+  }
+}
+
+@media (min-width: 2200px) {
+  .messages-inner,
+  .composer,
+  .composer-hint {
+    max-width: 1120px;
+  }
+
+  .app {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+}
+
+/* Short landscape phones: keep the header and composer compact. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .main-header {
+    height: 44px;
+  }
+
+  .messages-inner {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  .composer-hint {
+    display: none;
+  }
+
+  .composer textarea {
+    max-height: 96px;
+  }
+}
+
+/* Touch screens: larger hit targets, and 16px form text so iOS does not zoom on focus. */
+@media (pointer: coarse) {
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .thread-actions .icon-btn,
+  .msg-actions .icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .btn {
+    min-height: 40px;
+  }
+
+  .input,
+  .input-group input,
+  .composer textarea,
+  textarea.code,
+  .thread-edit .input {
+    font-size: 16px;
+  }
+
+  .thread-select {
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
 }
 

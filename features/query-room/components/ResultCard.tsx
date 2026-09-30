@@ -144,6 +144,10 @@ export default function ResultCard({ result, sql }: { result: QueryResult; sql?:
         <div className='result-note'>The query returned no columns.</div>
       )}
 
+      {result.columns.length > 0 && result.rows.length === 0 && tab === 'table' && (
+        <div className='result-note result-empty'>The query returned no rows.</div>
+      )}
+
       {result.truncated && (
         <div className='result-note'>
           <CircleAlert size={13} />
