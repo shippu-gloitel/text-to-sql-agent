@@ -5,11 +5,14 @@ import type { SessionVaultEnvelope, VaultEnvelope } from './security/vault';
 export const STORAGE_KEYS = {
   vault: 'tsql.v1.vault',
   settings: 'tsql.v1.settings',
-  threads: 'tsql.v2.threads',
+  // Encrypted with the workspace data key (see `StoredProfiles.threadsKey`).
+  threads: 'tsql.v3.threads',
 } as const;
 
+// Plaintext chat history from earlier versions; migrated into encrypted storage on unlock.
 export const LEGACY_STORAGE_KEYS = {
-  threads: 'tsql.v1.threads',
+  threadsV1: 'tsql.v1.threads',
+  threadsV2: 'tsql.v2.threads',
 } as const;
 
 const SESSION_STORAGE_KEYS = {
@@ -58,8 +61,14 @@ export function clearSessionVault() {
   }
 }
 
+export function removeStorage(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Local storage may be disabled by the browser.
+  }
+}
+
 export function clearAppStorage() {
-  [...Object.values(STORAGE_KEYS), ...Object.values(LEGACY_STORAGE_KEYS)].forEach(key =>
-    localStorage.removeItem(key),
-  );
+  [...Object.values(STORAGE_KEYS), ...Object.values(LEGACY_STORAGE_KEYS)].forEach(removeStorage);
 }

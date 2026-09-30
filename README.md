@@ -1,36 +1,90 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Queryroom — Text-to-SQL agent
 
-## Getting Started
+Ask questions about a PostgreSQL, MySQL or SQLite database in plain language. An LLM drafts a
+read-only SQL query, you review (and optionally edit) it, and it only runs after you approve it.
 
-First, run the development server:
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
+bun install
+cp .env.example .env.local   # optional settings, see below
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000> for the product overview, or go straight to
+<http://localhost:3000/workspace>. Enter the database and model details, test both connections,
+and choose a passphrase. Connection details and chat history are encrypted in your browser with that
+passphrase.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## How a question is answered
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. The server reads the database schema (cached for one minute) and sends it, along with your
+   question and the optional database description from setup, to the model (any
+   OpenAI-compatible endpoint).
+2. The draft SQL goes through the safety check in `lib/security/sql-policy.ts`. If it fails, the
+   model gets the errors and up to two attempts to correct it.
+3. You see the SQL and approve, edit or reject it. Edited SQL is checked again, and problems are
+   shown on the approval card.
+4. The approved query runs in a read-only transaction with a statement timeout, capped at the
+   configured row and response-size limits.
 
-## Learn More
+Pasting SQL directly (optionally in a ` ```sql ` fence) skips the model and goes straight to
+approval.
 
-To learn more about Next.js, take a look at the following resources:
+## Safety model
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Use a read-only database user.** This is the primary protection. The SQL checks are a second
+  layer on top of it.
+- Only a single `SELECT`/`WITH` statement is accepted. Mutations, locking clauses, comments and
+  administration or file functions (`pg_*`, `set_config`, `sleep`, `load_file`, `load_extension`,
+  …) are rejected after parsing the query.
+- The outermost query always gets a `LIMIT` no larger than the configured maximum rows.
+- Each run has its own approval checkpoint. Approvals are single-use and expire after 30 minutes
+  or when the server restarts.
+- Chat history, including result rows, is stored encrypted in `localStorage`. Credentials are
+  stored in a passphrase vault (PBKDF2-SHA256, 600k iterations, AES-GCM).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Configuration
 
-## Deploy on Vercel
+All settings are optional environment variables (see `.env.example`):
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Variable              | Purpose                                                                  |
+| --------------------- | ------------------------------------------------------------------------ |
+| `APP_BASIC_AUTH`      | `user:password` — require HTTP Basic auth for the app and all API routes |
+| `ALLOWED_DB_HOSTS`    | Comma-separated hosts that PostgreSQL/MySQL connections may use          |
+| `SQLITE_ALLOWED_DIRS` | Comma-separated directories that SQLite files must be inside             |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Without them the server will connect to any host or file a client sends. That is fine on
+localhost, but set all three before exposing the app to anyone else.
+
+## Scripts
+
+| Command             | Description                          |
+| ------------------- | ------------------------------------ |
+| `bun dev`           | Start the development server         |
+| `bun run build`     | Production build (standalone output) |
+| `bun test`          | Unit tests                           |
+| `bun run typecheck` | TypeScript check                     |
+| `bun run lint`      | ESLint (includes Prettier)           |
+| `bun run verify`    | Typecheck, format, lint and build    |
+
+## Project layout
+
+```
+app/                Pages: home (/) and workspace (/workspace)
+app/api/            Route handlers (agent run/resume, health checks, schema)
+features/home       Home page and animated product demo
+features/query-room Workspace UI: setup, unlock and chat screens
+features/shared     Logo, theme store and toggle, motion settings
+lib/security/       SQL policy and browser vault encryption
+lib/server/agent/   LangGraph approval graph, prompts, model calls
+lib/server/db.ts    Database drivers, schema introspection, read-only execution
+proxy.ts            Optional Basic auth
+```
+
+## Known limitations
+
+- Approval checkpoints are held in memory, so pending approvals do not survive a restart and the
+  app should run as a single instance.
+- PostgreSQL SSL connections do not verify the server certificate.
+- Only OpenAI-compatible model providers are supported.

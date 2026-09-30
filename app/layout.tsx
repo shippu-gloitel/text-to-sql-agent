@@ -1,25 +1,38 @@
 import './globals.css';
-import type { Metadata } from 'next';
-import { Bricolage_Grotesque, IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
+import type { Metadata, Viewport } from 'next';
+import { Geist, Geist_Mono } from 'next/font/google';
 import React from 'react';
+import MotionProvider from '@/features/shared/MotionProvider';
 
-const display = Bricolage_Grotesque({ variable: '--font-display', subsets: ['latin'] });
-const sans = IBM_Plex_Sans({ variable: '--font-sans', subsets: ['latin'] });
-const mono = IBM_Plex_Mono({ variable: '--font-mono', subsets: ['latin'], weight: '400' });
+const sans = Geist({ variable: '--font-sans', subsets: ['latin'] });
+const mono = Geist_Mono({ variable: '--font-mono', subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Queryroom — Read-only data intelligence',
+  title: 'Queryroom',
   description: 'Ask questions about your database with a human-approved, read-only SQL agent.',
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#0b0b0c' },
+  ],
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html
-      lang='en'
-      className={`${display.variable} ${sans.variable} ${mono.variable}`}
-      suppressHydrationWarning
-    >
-      <body>{children}</body>
+    <html lang='en' className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
+      <head>
+        {/* Applies the saved (or system) theme before first paint so the page never flashes. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){var t;try{t=localStorage.getItem('queryroom.theme')}catch(e){}if(t!=='light'&&t!=='dark')t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t})()`,
+          }}
+        />
+      </head>
+      <body>
+        <MotionProvider>{children}</MotionProvider>
+      </body>
     </html>
   );
 }

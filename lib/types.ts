@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
-export const dialectSchema = z.enum(['postgresql', 'mysql', 'sqlite']);
-export type Dialect = z.infer<typeof dialectSchema>;
+export type Dialect = 'postgresql' | 'mysql' | 'sqlite';
 
 const sharedConnection = {
   name: z.string().min(1).max(80),
@@ -50,27 +49,22 @@ export const modelProfileSchema = z.object({
 });
 export type ModelProfile = z.infer<typeof modelProfileSchema>;
 
-export const schemaSnapshotSchema = z.object({
-  tables: z.array(
-    z.object({
-      name: z.string(),
-      schema: z.string().optional(),
-      columns: z.array(z.object({ name: z.string(), type: z.string() })),
-    }),
-  ),
-  relationships: z.array(
-    z.object({
-      fromSchema: z.string().optional(),
-      fromTable: z.string(),
-      fromColumn: z.string(),
-      toSchema: z.string().optional(),
-      toTable: z.string(),
-      toColumn: z.string(),
-    }),
-  ),
-  fingerprint: z.string(),
-});
-export type SchemaSnapshot = z.infer<typeof schemaSnapshotSchema>;
+export type SchemaSnapshot = {
+  tables: Array<{
+    name: string;
+    schema?: string;
+    columns: Array<{ name: string; type: string }>;
+  }>;
+  relationships: Array<{
+    fromSchema?: string;
+    fromTable: string;
+    fromColumn: string;
+    toSchema?: string;
+    toTable: string;
+    toColumn: string;
+  }>;
+  fingerprint: string;
+};
 
 export const runRequestSchema = z.object({
   question: z.string().trim().min(2).max(20000),
@@ -81,9 +75,9 @@ export const runRequestSchema = z.object({
 
 export const resumeRequestSchema = z.object({
   threadId: z.string().min(8).max(120),
+  runId: z.string().min(8).max(120),
   decision: z.enum(['approve', 'reject', 'edit']),
   sql: z.string().max(20000).optional(),
-  connection: connectionProfileSchema,
 });
 
 export type QueryColumn = { name: string; type?: string };
@@ -95,20 +89,21 @@ export type QueryResult = {
   durationMs: number;
 };
 
+export type ApprovalRequest = {
+  runId: string;
+  sql: string;
+  explanation: string;
+  tables: string[];
+  checks: string[];
+  errors: string[];
+};
+
 export type StreamEvent =
   | { type: 'run.started'; runId: string }
   | { type: 'stage.started' | 'stage.completed'; stage: string }
   | { type: 'sql.ready'; sql: string; explanation: string; tables: string[]; checks: string[] }
-  | {
-      type: 'approval.required';
-      sql: string;
-      explanation: string;
-      tables: string[];
-      checks: string[];
-    }
+  | ({ type: 'approval.required' } & ApprovalRequest)
   | { type: 'query.started' }
-  | { type: 'result.metadata'; columns: QueryColumn[] }
-  | { type: 'result.rows'; rows: Record<string, unknown>[] }
   | { type: 'result.completed'; result: QueryResult }
   | { type: 'run.completed'; answer: string }
   | { type: 'run.error'; message: string };
