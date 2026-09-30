@@ -81,9 +81,9 @@ export const runRequestSchema = z.object({
 
 export const resumeRequestSchema = z.object({
   threadId: z.string().min(8).max(120),
+  runId: z.string().min(8).max(120),
   decision: z.enum(['approve', 'reject', 'edit']),
   sql: z.string().max(20000).optional(),
-  connection: connectionProfileSchema,
 });
 
 export type QueryColumn = { name: string; type?: string };
@@ -95,20 +95,21 @@ export type QueryResult = {
   durationMs: number;
 };
 
+export type ApprovalRequest = {
+  runId: string;
+  sql: string;
+  explanation: string;
+  tables: string[];
+  checks: string[];
+  errors: string[];
+};
+
 export type StreamEvent =
   | { type: 'run.started'; runId: string }
   | { type: 'stage.started' | 'stage.completed'; stage: string }
   | { type: 'sql.ready'; sql: string; explanation: string; tables: string[]; checks: string[] }
-  | {
-      type: 'approval.required';
-      sql: string;
-      explanation: string;
-      tables: string[];
-      checks: string[];
-    }
+  | ({ type: 'approval.required' } & ApprovalRequest)
   | { type: 'query.started' }
-  | { type: 'result.metadata'; columns: QueryColumn[] }
-  | { type: 'result.rows'; rows: Record<string, unknown>[] }
   | { type: 'result.completed'; result: QueryResult }
   | { type: 'run.completed'; answer: string }
   | { type: 'run.error'; message: string };

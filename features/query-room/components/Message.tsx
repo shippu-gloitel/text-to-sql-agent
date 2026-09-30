@@ -10,9 +10,11 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useState } from 'react';
-import type { ChatMessage } from '../types';
+import type { Approval, ChatMessage } from '../types';
 
 const ResultCard = dynamic(() => import('./ResultCard'));
+
+type Resume = (assistantId: string, decision: 'approve' | 'reject' | 'edit', sql?: string) => void;
 
 export default function Message({
   message,
@@ -20,11 +22,9 @@ export default function Message({
   busy,
 }: {
   message: ChatMessage;
-  resume: (assistantId: string, decision: 'approve' | 'reject' | 'edit', sql?: string) => void;
+  resume: Resume;
   busy: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [editedSql, setEditedSql] = useState(message.approval?.sql ?? '');
   const [messageCopied, setMessageCopied] = useState(false);
 
   const copyMessage = async () => {
@@ -83,101 +83,140 @@ export default function Message({
         )}
 
         {message.approval && (
-          <div className='approval-card'>
-            <div className='approval-head'>
-              <div>
-                <span className='approval-kicker'>
-                  <ShieldCheck size={14} />
-                  Human approval required
-                </span>
-                <h3>Review before this query runs</h3>
-              </div>
-              <span className='approval-badge'>Read only</span>
-            </div>
-            <div className='approval-question'>
-              The agent wants to answer: <strong>{message.approval.explanation}</strong>
-            </div>
-            <div className='sql-block'>
-              <div className='code-head'>
-                <span>
-                  <Terminal size={14} />
-                  Generated SQL
-                </span>
-                <button
-                  className='icon-button'
-                  aria-label='Copy SQL'
-                  onClick={() => navigator.clipboard?.writeText(message.approval?.sql ?? '')}
-                >
-                  <Copy size={14} />
-                </button>
-              </div>
-              {editing ? (
-                <textarea
-                  value={editedSql}
-                  onChange={event => setEditedSql(event.target.value)}
-                  rows={6}
-                />
-              ) : (
-                <code>{message.approval.sql}</code>
-              )}
-            </div>
-            <div className='approval-meta'>
-              <span>Tables: {message.approval.tables.join(', ') || 'verified schema'}</span>
-              <span>{message.approval.checks.length} safety checks passed</span>
-            </div>
-            <div className='approval-actions'>
-              {editing ? (
-                <>
-                  <button
-                    className='primary-button'
-                    onClick={() => {
-                      setEditing(false);
-                      resume(message.id, 'edit', editedSql);
-                    }}
-                    disabled={busy}
-                  >
-                    <Check size={15} />
-                    Re-check and review
-                  </button>
-                  <button className='ghost-button' onClick={() => setEditing(false)}>
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    className='primary-button'
-                    onClick={() => resume(message.id, 'approve')}
-                    disabled={busy}
-                  >
-                    <Check size={15} />
-                    Approve and run
-                  </button>
-                  <button
-                    className='outline-button'
-                    onClick={() => {
-                      setEditedSql(message.approval?.sql ?? '');
-                      setEditing(true);
-                    }}
-                    disabled={busy}
-                  >
-                    <Terminal size={15} />
-                    Edit SQL
-                  </button>
-                  <button
-                    className='danger-button'
-                    onClick={() => resume(message.id, 'reject')}
-                    disabled={busy}
-                  >
-                    <X size={15} />
-                    Reject
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+          <ApprovalCard
+            messageId={message.id}
+            approval={message.approval}
+            resume={resume}
+            busy={busy}
+          />
         )}
         {message.result && <ResultCard result={message.result} sql={message.sql} />}
+      </div>
+    </div>
+  );
+}
+
+function ApprovalCard({
+  messageId,
+  approval,
+  resume,
+  busy,
+}: {
+  messageId: string;
+  approval: Approval;
+  resume: Resume;
+  busy: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editedSql, setEditedSql] = useState(approval.sql);
+
+  return (
+    <div className='approval-card'>
+      <div className='approval-head'>
+        <div>
+          <span className='approval-kicker'>
+            <ShieldCheck size={14} />
+            Human approval required
+          </span>
+          <h3>Review before this query runs</h3>
+        </div>
+        <span className='approval-badge'>Read only</span>
+      </div>
+      <div className='approval-question'>
+        The agent wants to answer: <strong>{approval.explanation}</strong>
+      </div>
+      <div className='sql-block'>
+        <div className='code-head'>
+          <span>
+            <Terminal size={14} />
+            {approval.errors.length ? 'Edited SQL' : 'Generated SQL'}
+          </span>
+          <button
+            className='icon-button'
+            aria-label='Copy SQL'
+            onClick={() => navigator.clipboard?.writeText(approval.sql ?? '')}
+          >
+            <Copy size={14} />
+          </button>
+        </div>
+        {editing ? (
+          <textarea
+            value={editedSql}
+            onChange={event => setEditedSql(event.target.value)}
+            rows={6}
+          />
+        ) : (
+          <code>{approval.sql}</code>
+        )}
+      </div>
+      {approval.errors.length > 0 ? (
+        <div className='approval-errors' role='alert'>
+          <CircleAlert size={15} />
+          <div>
+            <strong>The edited SQL did not pass the safety check.</strong>
+            <ul>
+              {approval.errors.map(error => (
+                <li key={error}>{error}</li>
+              ))}
+            </ul>
+            Edit the SQL again to fix it, or reject this query.
+          </div>
+        </div>
+      ) : (
+        <div className='approval-meta'>
+          <span>Tables: {approval.tables.join(', ') || 'verified schema'}</span>
+          <span>{approval.checks.length} safety checks passed</span>
+        </div>
+      )}
+      <div className='approval-actions'>
+        {editing ? (
+          <>
+            <button
+              className='primary-button'
+              onClick={() => {
+                setEditing(false);
+                resume(messageId, 'edit', editedSql);
+              }}
+              disabled={busy}
+            >
+              <Check size={15} />
+              Re-check and review
+            </button>
+            <button className='ghost-button' onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className='primary-button'
+              onClick={() => resume(messageId, 'approve')}
+              disabled={busy || approval.errors.length > 0}
+            >
+              <Check size={15} />
+              Approve and run
+            </button>
+            <button
+              className='outline-button'
+              onClick={() => {
+                setEditedSql(approval.sql ?? '');
+                setEditing(true);
+              }}
+              disabled={busy}
+            >
+              <Terminal size={15} />
+              Edit SQL
+            </button>
+            <button
+              className='danger-button'
+              onClick={() => resume(messageId, 'reject')}
+              disabled={busy}
+            >
+              <X size={15} />
+              Reject
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

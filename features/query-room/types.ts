@@ -29,9 +29,22 @@ export type ModelForm = {
   temperature: string;
 };
 
-export type StoredProfiles = { connection: ConnectionProfile; model: ModelProfile };
+export type StoredProfiles = {
+  connection: ConnectionProfile;
+  model: ModelProfile;
+  /** Random key that encrypts chat history. Never sent to the server. */
+  threadsKey?: string;
+};
 
-export type Approval = { sql: string; explanation: string; tables: string[]; checks: string[] };
+export type Approval = {
+  runId: string;
+  sql: string;
+  explanation: string;
+  tables: string[];
+  checks: string[];
+  /** Problems with SQL the user edited. Approval is blocked until they are fixed. */
+  errors: string[];
+};
 
 export type ChatMessage = {
   id: string;
@@ -44,6 +57,7 @@ export type ChatMessage = {
   result?: QueryResult;
   running?: boolean;
   rejected?: boolean;
+  stopped?: boolean;
 };
 
 export type ChatThread = {

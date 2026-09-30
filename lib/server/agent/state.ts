@@ -6,6 +6,7 @@ import {
   type ConnectionProfile,
   type ModelProfile,
   type QueryResult,
+  type StreamEvent,
 } from '../../types';
 
 const agentDecisionSchema = z.object({
@@ -22,7 +23,7 @@ export type AgentInput = {
   threadId: string;
 };
 
-export type AgentEmit = (event: Record<string, unknown>) => void;
+export type AgentEmit = (event: StreamEvent) => void;
 
 export type Draft = {
   isDatabaseQuestion: boolean;
@@ -40,6 +41,8 @@ export const AgentState = new StateSchema({
   explanation: z.string(),
   tables: z.array(z.string()),
   checks: z.array(z.string()),
+  // Problems found in SQL the user edited; the approval step shows them and blocks execution.
+  validationErrors: z.array(z.string()).optional(),
   decision: agentDecisionSchema.optional(),
   result: z.custom<QueryResult>().optional(),
 });

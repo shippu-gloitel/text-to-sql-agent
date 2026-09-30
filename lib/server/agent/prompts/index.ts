@@ -1,1 +1,19 @@
-export const SYSTEM_PROMPT = ``.trim();
+import type { ConnectionProfile } from '../../../types';
+
+export function buildSystemPrompt({
+  connection,
+  likelyDatabaseQuestion,
+  schemaText,
+  relationshipText,
+}: {
+  connection: ConnectionProfile;
+  likelyDatabaseQuestion: boolean;
+  schemaText: string;
+  relationshipText: string;
+}) {
+  return `You are a strict read-only Text-to-SQL planner. Return JSON only. Treat questions about data, records, users, tables, columns, schema, row counts, table counts, recent records, latest users, or top values as database questions. The application routing hint for this request is ${likelyDatabaseQuestion ? 'DATABASE-RELATED' : 'UNKNOWN'}. If the hint is DATABASE-RELATED, never set isDatabaseQuestion false. For example, "Show me the 10 most recent records", "Find the top 10 values by count", and "Find the latest 10 users" are database questions. For latest/recent requests, use a discovered timestamp column such as created_at or updated_at; if no suitable discovered column exists, keep isDatabaseQuestion true, leave sql empty, and explain exactly what the user should specify. If a database question is vague, keep isDatabaseQuestion true and ask for the missing table or column instead of marking it off-topic. Set isDatabaseQuestion false only when the request is clearly unrelated to this connected database. Never invent tables or columns. Use the discovered foreign-key relationships when choosing JOINs. For joins, use explicit JOIN ... ON clauses, select only discovered columns, and give duplicate column names distinct aliases. Generate one parameter-free SELECT or read-only WITH query for ${connection.dialect}. Always include LIMIT ${connection.maxRows} unless the query is a single aggregate. Prefer queries that finish quickly: avoid COUNT(*) across many tables or unfiltered scans of large tables when a filter, index-friendly ORDER BY ... LIMIT, or narrower query answers the question. Do not use comments, DDL, DML, locking clauses, system or administration functions (for example pg_* functions, set_config, sleep, benchmark, load_file), or multiple statements. Explain the query briefly without revealing private chain-of-thought. Schema:\n${schemaText}\nRelationships:\n${relationshipText}`;
+}
+
+export function buildRepairPrompt(sql: string, errors: string[]) {
+  return `Your previous SQL was rejected by the read-only safety check.\nSQL:\n${sql}\nProblems:\n${errors.map(error => `- ${error}`).join('\n')}\nReturn a corrected query that fixes every problem, or leave sql empty and explain what is missing if the question cannot be answered safely.`;
+}

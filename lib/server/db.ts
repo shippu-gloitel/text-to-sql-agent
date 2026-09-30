@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import {
   connectionProfileSchema,
   type ConnectionProfile,
@@ -6,60 +7,75 @@ import {
   type QueryResult,
   type SchemaSnapshot,
 } from '../types';
+import { UserFacingError } from './error';
+import { boundRows } from './result';
 
-type RawQueryResult = { rows: Record<string, unknown>[]; columns: QueryColumn[] };
+type PostgresProfile = Extract<ConnectionProfile, { dialect: 'postgresql' }>;
+type MysqlProfile = Extract<ConnectionProfile, { dialect: 'mysql' }>;
+type SqliteProfile = Extract<ConnectionProfile, { dialect: 'sqlite' }>;
 
-function assertProfile(profile: ConnectionProfile) {
-  return connectionProfileSchema.parse(profile);
+const SCHEMA_CACHE_TTL_MS = 60_000;
+const SCHEMA_CACHE_MAX_ENTRIES = 20;
+const schemaCache = new Map<string, { expiresAt: number; snapshot: SchemaSnapshot }>();
+
+function envList(name: string) {
+  return (process.env[name] ?? '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
 }
 
-export async function healthCheck(input: ConnectionProfile) {
-  const profile = assertProfile(input);
-  const started = performance.now();
-
+/**
+ * Optional server-side guard rails. When `ALLOWED_DB_HOSTS` or `SQLITE_ALLOWED_DIRS` is set, the
+ * server refuses to connect anywhere else, so the API cannot be used to probe internal hosts or
+ * open arbitrary files.
+ */
+function assertTargetAllowed(profile: ConnectionProfile) {
   if (profile.dialect === 'sqlite') {
-    const Database = (await import('better-sqlite3')).default;
-    const db = new Database(profile.path, { readonly: true, fileMustExist: true });
-    try {
-      const version = db.prepare('SELECT sqlite_version() AS version').get() as { version: string };
-      return {
-        ok: true,
-        version: version.version,
-        latencyMs: Math.round(performance.now() - started),
-        schemaAvailable: true,
-      };
-    } finally {
-      db.close();
-    }
+    const allowedDirs = envList('SQLITE_ALLOWED_DIRS').map(dir => path.resolve(dir));
+    if (!allowedDirs.length) return;
+    const resolved = path.resolve(profile.path);
+    if (!allowedDirs.some(dir => resolved === dir || resolved.startsWith(`${dir}${path.sep}`)))
+      throw new UserFacingError(
+        'This SQLite path is outside the directories allowed by the server.',
+      );
+    return;
   }
+  const allowedHosts = envList('ALLOWED_DB_HOSTS').map(host => host.toLowerCase());
+  if (allowedHosts.length && !allowedHosts.includes(profile.host.toLowerCase()))
+    throw new UserFacingError('This database host is not allowed by the server.');
+}
 
-  if (profile.dialect === 'postgresql') {
-    const { Client } = await import('pg');
-    const client = new Client({
-      host: profile.host,
-      port: profile.port,
-      database: profile.database,
-      user: profile.username,
-      password: profile.password,
-      ssl: profile.ssl ? { rejectUnauthorized: false } : undefined,
-      connectionTimeoutMillis: profile.timeoutMs,
-    });
-    await client.connect();
-    try {
-      const result = await client.query('SELECT version() AS version');
-      return {
-        ok: true,
-        version: String(result.rows[0]?.version ?? 'PostgreSQL'),
-        latencyMs: Math.round(performance.now() - started),
-        schemaAvailable: true,
-      };
-    } finally {
-      await client.end();
-    }
-  }
+function assertProfile(profile: ConnectionProfile) {
+  const parsed = connectionProfileSchema.parse(profile);
+  assertTargetAllowed(parsed);
+  return parsed;
+}
 
+async function openSqlite(profile: SqliteProfile) {
+  const Database = (await import('better-sqlite3')).default;
+  return new Database(profile.path, { readonly: true, fileMustExist: true });
+}
+
+async function openPostgres(profile: PostgresProfile) {
+  const { Client } = await import('pg');
+  const client = new Client({
+    host: profile.host,
+    port: profile.port,
+    database: profile.database,
+    user: profile.username,
+    password: profile.password,
+    ssl: profile.ssl ? { rejectUnauthorized: false } : undefined,
+    connectionTimeoutMillis: profile.timeoutMs,
+    query_timeout: profile.timeoutMs + 5_000,
+  });
+  await client.connect();
+  return client;
+}
+
+async function openMysql(profile: MysqlProfile) {
   const mysql = await import('mysql2/promise');
-  const connection = await mysql.createConnection({
+  return mysql.createConnection({
     host: profile.host,
     port: profile.port,
     database: profile.database,
@@ -68,30 +84,80 @@ export async function healthCheck(input: ConnectionProfile) {
     ssl: profile.ssl ? {} : undefined,
     connectTimeout: profile.timeoutMs,
   });
-  try {
-    const [rows] = await connection.execute('SELECT VERSION() AS version');
-    const version = (rows as Array<{ version: string }>)[0]?.version ?? 'MySQL';
-    return {
-      ok: true,
-      version,
-      latencyMs: Math.round(performance.now() - started),
-      schemaAvailable: true,
-    };
-  } finally {
-    await connection.end();
-  }
 }
 
-export async function introspect(input: ConnectionProfile): Promise<SchemaSnapshot> {
+export async function healthCheck(input: ConnectionProfile) {
   const profile = assertProfile(input);
+  const started = performance.now();
+  let version: string;
+
+  if (profile.dialect === 'sqlite') {
+    const db = await openSqlite(profile);
+    try {
+      version = (db.prepare('SELECT sqlite_version() AS version').get() as { version: string })
+        .version;
+    } finally {
+      db.close();
+    }
+  } else if (profile.dialect === 'postgresql') {
+    const client = await openPostgres(profile);
+    try {
+      const result = await client.query('SELECT version() AS version');
+      version = String(result.rows[0]?.version ?? 'PostgreSQL');
+    } finally {
+      await client.end();
+    }
+  } else {
+    const connection = await openMysql(profile);
+    try {
+      const [rows] = await connection.execute('SELECT VERSION() AS version');
+      version = (rows as Array<{ version: string }>)[0]?.version ?? 'MySQL';
+    } finally {
+      await connection.end();
+    }
+  }
+
+  return {
+    ok: true,
+    version,
+    latencyMs: Math.round(performance.now() - started),
+    schemaAvailable: true,
+  };
+}
+
+function schemaCacheKey(profile: ConnectionProfile) {
+  return createHash('sha256').update(JSON.stringify(profile)).digest('hex');
+}
+
+/** Reads the schema, reusing a snapshot from the last minute unless `fresh` is requested. */
+export async function introspect(
+  input: ConnectionProfile,
+  { fresh = false }: { fresh?: boolean } = {},
+): Promise<SchemaSnapshot> {
+  const profile = assertProfile(input);
+  const key = schemaCacheKey(profile);
+  const cached = schemaCache.get(key);
+  if (!fresh && cached && cached.expiresAt > Date.now()) return cached.snapshot;
+
+  const snapshot = await readSchema(profile);
+  schemaCache.delete(key);
+  schemaCache.set(key, { expiresAt: Date.now() + SCHEMA_CACHE_TTL_MS, snapshot });
+  while (schemaCache.size > SCHEMA_CACHE_MAX_ENTRIES) {
+    const oldest = schemaCache.keys().next().value;
+    if (oldest === undefined) break;
+    schemaCache.delete(oldest);
+  }
+  return snapshot;
+}
+
+async function readSchema(profile: ConnectionProfile): Promise<SchemaSnapshot> {
   // eslint-disable-next-line no-useless-assignment
   let tables: SchemaSnapshot['tables'] = [];
   // eslint-disable-next-line no-useless-assignment
   let relationships: SchemaSnapshot['relationships'] = [];
 
   if (profile.dialect === 'sqlite') {
-    const Database = (await import('better-sqlite3')).default;
-    const db = new Database(profile.path, { readonly: true, fileMustExist: true });
+    const db = await openSqlite(profile);
     try {
       const names = db
         .prepare(
@@ -122,17 +188,7 @@ export async function introspect(input: ConnectionProfile): Promise<SchemaSnapsh
       db.close();
     }
   } else if (profile.dialect === 'postgresql') {
-    const { Client } = await import('pg');
-    const client = new Client({
-      host: profile.host,
-      port: profile.port,
-      database: profile.database,
-      user: profile.username,
-      password: profile.password,
-      ssl: profile.ssl ? { rejectUnauthorized: false } : undefined,
-      connectionTimeoutMillis: profile.timeoutMs,
-    });
-    await client.connect();
+    const client = await openPostgres(profile);
     try {
       const result = await client.query(
         `SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name, ordinal_position`,
@@ -164,16 +220,7 @@ export async function introspect(input: ConnectionProfile): Promise<SchemaSnapsh
       await client.end();
     }
   } else {
-    const mysql = await import('mysql2/promise');
-    const connection = await mysql.createConnection({
-      host: profile.host,
-      port: profile.port,
-      database: profile.database,
-      user: profile.username,
-      password: profile.password,
-      ssl: profile.ssl ? {} : undefined,
-      connectTimeout: profile.timeoutMs,
-    });
+    const connection = await openMysql(profile);
     try {
       const [rows] = await connection.execute(
         `SELECT TABLE_SCHEMA AS table_schema, TABLE_NAME AS table_name, COLUMN_NAME AS column_name, DATA_TYPE AS data_type FROM information_schema.columns WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION`,
@@ -215,6 +262,81 @@ export async function introspect(input: ConnectionProfile): Promise<SchemaSnapsh
   return { tables, relationships, fingerprint };
 }
 
+export type TableRowCount = { schema: string | null; table: string; rows: number | null };
+
+/**
+ * Row counts per table. PostgreSQL and MySQL use the planner's statistics, which return instantly
+ * (exact COUNT(*) scans every table and easily exceeds the query timeout on real databases).
+ * SQLite files are local, so they are counted exactly.
+ */
+export async function tableRowCounts(
+  input: ConnectionProfile,
+): Promise<{ estimated: boolean; counts: TableRowCount[] }> {
+  const profile = assertProfile(input);
+
+  if (profile.dialect === 'sqlite') {
+    const db = await openSqlite(profile);
+    try {
+      const names = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all() as Array<{ name: string }>;
+      const counts = names.map(({ name }) => ({
+        schema: null,
+        table: name,
+        rows: (
+          db.prepare(`SELECT COUNT(*) AS n FROM ${quoteIdentifier(name, 'sqlite')}`).get() as {
+            n: number;
+          }
+        ).n,
+      }));
+      return { estimated: false, counts };
+    } finally {
+      db.close();
+    }
+  }
+
+  if (profile.dialect === 'postgresql') {
+    const client = await openPostgres(profile);
+    try {
+      // reltuples is -1 for tables that have never been vacuumed or analyzed; partitioned tables
+      // report the sum of their partitions.
+      const result = await client.query(
+        `SELECT n.nspname AS schema, c.relname AS "table", CASE WHEN c.relkind = 'p' THEN (SELECT SUM(GREATEST(part.reltuples, 0)) FROM pg_inherits inh JOIN pg_class part ON part.oid = inh.inhrelid WHERE inh.inhparent = c.oid)::bigint WHEN c.reltuples < 0 THEN NULL ELSE c.reltuples::bigint END AS "rows" FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%' ORDER BY n.nspname, c.relname`,
+      );
+      return {
+        estimated: true,
+        counts: result.rows.map(row => ({
+          schema: row.schema,
+          table: row.table,
+          rows: row.rows === null ? null : Number(row.rows),
+        })),
+      };
+    } finally {
+      await client.end();
+    }
+  }
+
+  const connection = await openMysql(profile);
+  try {
+    const [rows] = await connection.execute(
+      `SELECT TABLE_SCHEMA AS table_schema, TABLE_NAME AS table_name, TABLE_ROWS AS table_rows FROM information_schema.tables WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`,
+      [profile.database],
+    );
+    return {
+      estimated: true,
+      counts: (rows as Array<Record<string, unknown>>).map(row => ({
+        schema: String(row.table_schema),
+        table: String(row.table_name),
+        rows: row.table_rows === null ? null : Number(row.table_rows),
+      })),
+    };
+  } finally {
+    await connection.end();
+  }
+}
+
 function groupColumns(rows: Array<{ schema: string; name: string; column: string; type: string }>) {
   const grouped = new Map<string, SchemaSnapshot['tables'][number]>();
   rows.forEach(row => {
@@ -231,103 +353,101 @@ function quoteIdentifier(value: string, dialect: 'sqlite' | 'postgresql' | 'mysq
   return `${quote}${value.replaceAll(quote, quote + quote)}${quote}`;
 }
 
-export async function executeReadOnly(
-  input: ConnectionProfile,
-  sql: string,
-  params: unknown[] = [],
-): Promise<QueryResult> {
+/** Applies a per-statement time limit on MySQL (max_execution_time) or MariaDB (max_statement_time). */
+async function setMysqlTimeout(
+  connection: Awaited<ReturnType<typeof openMysql>>,
+  timeoutMs: number,
+) {
+  try {
+    await connection.query(`SET SESSION max_execution_time = ${Math.round(timeoutMs)}`);
+  } catch {
+    try {
+      await connection.query(`SET SESSION max_statement_time = ${Math.ceil(timeoutMs / 1000)}`);
+    } catch {
+      // Older servers support neither variable; the connection timeout still applies.
+    }
+  }
+}
+
+function isStatementTimeout(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const { code, errno, message } = error as { code?: unknown; errno?: unknown; message?: unknown };
+  return (
+    code === '57014' || // PostgreSQL query_canceled (statement_timeout)
+    errno === 3024 || // MySQL ER_QUERY_TIMEOUT (max_execution_time)
+    errno === 1969 || // MariaDB ER_STATEMENT_TIMEOUT (max_statement_time)
+    (typeof message === 'string' &&
+      /statement timeout|maximum statement execution time/i.test(message))
+  );
+}
+
+/** Runs an approved query, turning a timeout into an explanation the user can act on. */
+export async function executeReadOnly(input: ConnectionProfile, sql: string): Promise<QueryResult> {
+  try {
+    return await runReadOnly(input, sql);
+  } catch (error) {
+    if (!isStatementTimeout(error)) throw error;
+    const seconds = Math.round(input.timeoutMs / 1000);
+    throw new UserFacingError(
+      `The database stopped this query after ${seconds}s because it exceeded the query timeout. Try a narrower question (fewer tables, a filter or a date range), or raise "Query timeout (ms)" in the database settings.`,
+    );
+  }
+}
+
+async function runReadOnly(input: ConnectionProfile, sql: string): Promise<QueryResult> {
   const profile = assertProfile(input);
   const started = performance.now();
-  let result: RawQueryResult;
+  let rows: Record<string, unknown>[];
+  let columns: QueryColumn[];
 
   if (profile.dialect === 'sqlite') {
-    const Database = (await import('better-sqlite3')).default;
-    const db = new Database(profile.path, { readonly: true, fileMustExist: true });
+    const db = await openSqlite(profile);
     try {
       db.pragma('query_only = ON');
       const statement = db.prepare(sql);
-      const rows = statement.all(...params) as Record<string, unknown>[];
-      result = { rows, columns: rows.length ? Object.keys(rows[0]).map(name => ({ name })) : [] };
+      columns = statement.columns().map(column => ({
+        name: column.name,
+        ...(column.type ? { type: column.type } : {}),
+      }));
+      rows = statement.all() as Record<string, unknown>[];
     } finally {
       db.close();
     }
   } else if (profile.dialect === 'postgresql') {
-    const { Client } = await import('pg');
-    const client = new Client({
-      host: profile.host,
-      port: profile.port,
-      database: profile.database,
-      user: profile.username,
-      password: profile.password,
-      ssl: profile.ssl ? { rejectUnauthorized: false } : undefined,
-      connectionTimeoutMillis: profile.timeoutMs,
-    });
-    await client.connect();
+    const client = await openPostgres(profile);
     try {
       await client.query('BEGIN READ ONLY');
       await client.query(`SET LOCAL statement_timeout = ${Math.round(profile.timeoutMs)}`);
-      const response = await client.query(sql, params);
-      result = {
-        rows: response.rows as Record<string, unknown>[],
-        columns: response.fields.map(field => ({
-          name: field.name,
-          type: String(field.dataTypeID),
-        })),
-      };
+      const response = await client.query(sql);
+      rows = response.rows as Record<string, unknown>[];
+      columns = response.fields.map(field => ({
+        name: field.name,
+        type: String(field.dataTypeID),
+      }));
       await client.query('ROLLBACK');
     } finally {
       await client.end();
     }
   } else {
-    const mysql = await import('mysql2/promise');
-    const connection = await mysql.createConnection({
-      host: profile.host,
-      port: profile.port,
-      database: profile.database,
-      user: profile.username,
-      password: profile.password,
-      ssl: profile.ssl ? {} : undefined,
-      connectTimeout: profile.timeoutMs,
-    });
+    const connection = await openMysql(profile);
     try {
+      await setMysqlTimeout(connection, profile.timeoutMs);
       await connection.query('SET TRANSACTION READ ONLY');
       await connection.beginTransaction();
-      const [rows, fields] = await connection.execute(
-        sql,
-        params as Array<string | number | null | boolean | Buffer>,
-      );
-      result = {
-        rows: rows as Record<string, unknown>[],
-        columns: (fields as Array<{ name: string }>).map(field => ({ name: field.name })),
-      };
+      const [resultRows, fields] = await connection.query(sql);
+      rows = resultRows as Record<string, unknown>[];
+      columns = (fields as Array<{ name: string }>).map(field => ({ name: field.name }));
       await connection.rollback();
     } finally {
       await connection.end();
     }
   }
 
-  const serializedRows = result.rows.map(row =>
-    JSON.stringify(row, (_, value) => (typeof value === 'bigint' ? value.toString() : value)),
-  );
-  const rows: Record<string, unknown>[] = [];
-  let responseBytes = 2;
-  for (let index = 0; index < result.rows.length; index += 1) {
-    const rowBytes = Buffer.byteLength(serializedRows[index]);
-    const separatorBytes = rows.length ? 1 : 0;
-    if (
-      rows.length >= profile.maxRows ||
-      responseBytes + separatorBytes + rowBytes > profile.maxResponseBytes
-    )
-      break;
-    rows.push(result.rows[index]);
-    responseBytes += separatorBytes + rowBytes;
-  }
-  const truncated = rows.length < result.rows.length;
-  return {
-    columns: result.columns,
+  return boundRows(
     rows,
-    rowCount: rows.length,
-    truncated,
-    durationMs: Math.round(performance.now() - started),
-  };
+    columns,
+    profile.maxRows,
+    profile.maxResponseBytes,
+    Math.round(performance.now() - started),
+  );
 }

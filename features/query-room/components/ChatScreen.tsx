@@ -2,10 +2,10 @@ import {
   Lock,
   MessageSquare,
   Plus,
-  RefreshCw,
   Send,
   ShieldCheck,
   Sparkles,
+  Square,
   Terminal,
   Trash2,
 } from 'lucide-react';
@@ -27,6 +27,7 @@ export default function ChatScreen({
   busy,
   scrollRef,
   submitQuestion,
+  stopRun,
   resume,
   startNewThread,
   selectThread,
@@ -46,6 +47,7 @@ export default function ChatScreen({
   busy: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   submitQuestion: () => void;
+  stopRun: () => void;
   resume: (assistantId: string, decision: 'approve' | 'reject' | 'edit', sql?: string) => void;
   startNewThread: () => void;
   selectThread: (id: string) => void;
@@ -176,14 +178,25 @@ export default function ChatScreen({
                 maxLength={20000}
                 disabled={busy}
               />
-              <button
-                className='send-button'
-                onClick={submitQuestion}
-                disabled={busy || !question.trim()}
-                aria-label='Send question'
-              >
-                {busy ? <RefreshCw className='spin' size={18} /> : <Send size={18} />}
-              </button>
+              {busy ? (
+                <button
+                  className='send-button'
+                  onClick={stopRun}
+                  aria-label='Stop the running request'
+                  title='Stop'
+                >
+                  <Square size={16} />
+                </button>
+              ) : (
+                <button
+                  className='send-button'
+                  onClick={submitQuestion}
+                  disabled={!question.trim()}
+                  aria-label='Send question'
+                >
+                  <Send size={18} />
+                </button>
+              )}
             </div>
             <div className='composer-footer'>
               <span>

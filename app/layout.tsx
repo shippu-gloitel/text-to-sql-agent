@@ -19,6 +19,14 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       className={`${display.variable} ${sans.variable} ${mono.variable}`}
       suppressHydrationWarning
     >
+      <head>
+        {/* Applies the saved theme before first paint so light mode does not flash dark. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem('queryroom.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}`,
+          }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );

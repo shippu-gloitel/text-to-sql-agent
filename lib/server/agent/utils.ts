@@ -4,10 +4,15 @@ import {
   modelProfileSchema,
   type ConnectionProfile,
   type ModelProfile,
-  type QueryResult,
   type SchemaSnapshot,
 } from '../../types';
+import { matchesAllowedObject } from '../../security/sql-policy';
+import type { TableRowCount } from '../db';
+import { boundRows } from '../result';
+import { buildRepairPrompt, buildSystemPrompt } from './prompts';
 import type { Draft } from './state';
+
+const MODEL_TIMEOUT_MS = 90_000;
 
 const DraftSchema = z.object({
   isDatabaseQuestion: z.boolean(),
@@ -41,9 +46,7 @@ export function isGreeting(question: string) {
 }
 
 export function tableHint(schema: SchemaSnapshot) {
-  const names = schema.tables.map(
-    table => `${table.schema ? `${table.schema}.` : ''}${table.name}`,
-  );
+  const names = schema.tables.map(tableName);
   if (!names.length) return 'No user tables were discovered in the connected database.';
 
   return `Available tables:\n${names.map(name => `• ${name}`).join('\n')}`;
@@ -55,6 +58,8 @@ export function createModel(profile: ModelProfile) {
     apiKey: parsed.apiKey,
     model: parsed.model,
     temperature: parsed.temperature,
+    timeout: MODEL_TIMEOUT_MS,
+    maxRetries: 1,
     configuration: parsed.baseUrl ? { baseURL: parsed.baseUrl } : undefined,
   });
 }
@@ -63,15 +68,11 @@ export function tableName(table: SchemaSnapshot['tables'][number]) {
   return `${table.schema ? `${table.schema}.` : ''}${table.name}`;
 }
 
-function isAllowedObject(name: string, allowedObjects: string[]) {
-  return allowedObjects.some(
-    allowed => name === allowed || name.endsWith(`.${allowed}`) || allowed.endsWith(`.${name}`),
-  );
-}
-
 export function restrictSchema(schema: SchemaSnapshot, allowedObjects: string[]): SchemaSnapshot {
   if (!allowedObjects.length) return schema;
-  const tables = schema.tables.filter(table => isAllowedObject(tableName(table), allowedObjects));
+  const tables = schema.tables.filter(table =>
+    matchesAllowedObject(tableName(table), allowedObjects),
+  );
   const visibleNames = new Set(tables.map(table => tableName(table)));
   return {
     ...schema,
@@ -148,6 +149,46 @@ export function isTableListQuestion(question: string) {
       /\bhow\s+many\b/i.test(question))
   );
 }
+export function isRowCountQuestion(question: string) {
+  const text = question.toLowerCase();
+  const asksCount = /\b(how\s+many|count|counts|number\s+of|size|sizes)\b/.test(text);
+  const aboutRows = /\b(rows?|records?|entries)\b/.test(text);
+  const everyTable =
+    /\b(each|every|all|per)\s+(the\s+)?tables?\b|\btables?\b.*\b(sizes?|row\s+counts?)\b/.test(
+      text,
+    );
+  return asksCount && aboutRows && everyTable;
+}
+
+export function rowCountResult(
+  counts: TableRowCount[],
+  allowedObjects: string[],
+  estimated: boolean,
+  maxRows: number,
+  maxResponseBytes: number,
+) {
+  const visible = allowedObjects.length
+    ? counts.filter(count =>
+        matchesAllowedObject(
+          count.schema ? `${count.schema}.${count.table}` : count.table,
+          allowedObjects,
+        ),
+      )
+    : counts;
+  const rowsColumn = estimated ? 'estimated_rows' : 'rows';
+  return boundRows(
+    visible.map(count => ({ schema: count.schema, table: count.table, [rowsColumn]: count.rows })),
+    [
+      { name: 'schema', type: 'text' },
+      { name: 'table', type: 'text' },
+      { name: rowsColumn, type: 'number' },
+    ],
+    maxRows,
+    maxResponseBytes,
+    0,
+  );
+}
+
 export function tableCatalogResult(
   schema: SchemaSnapshot,
   maxRows: number,
@@ -158,38 +199,32 @@ export function tableCatalogResult(
     table: table.name,
     columns: table.columns.map(column => column.name).join(', '),
   }));
-  const serializedRows = allRows.map(row => JSON.stringify(row));
-  const rows: typeof allRows = [];
-  let responseBytes = 2;
-  for (let index = 0; index < allRows.length; index += 1) {
-    const rowBytes = Buffer.byteLength(serializedRows[index]);
-    const separatorBytes = rows.length ? 1 : 0;
-    if (rows.length >= maxRows || responseBytes + separatorBytes + rowBytes > maxResponseBytes)
-      break;
-    rows.push(allRows[index]);
-    responseBytes += separatorBytes + rowBytes;
-  }
-  const truncated = rows.length < allRows.length;
-  return {
-    columns: [
+  return boundRows(
+    allRows,
+    [
       { name: 'schema', type: 'text' },
       { name: 'table', type: 'text' },
       { name: 'columns', type: 'text' },
     ],
-    rows,
-    rowCount: rows.length,
-    truncated,
-    durationMs: 0,
-  } satisfies QueryResult;
+    maxRows,
+    maxResponseBytes,
+    0,
+  );
 }
+
+export type DraftOptions = {
+  signal?: AbortSignal;
+  /** A previously rejected attempt, sent back so the model can correct it. */
+  rejected?: { sql: string; errors: string[] };
+};
 
 export async function createDraft(
   question: string,
   modelProfile: ModelProfile,
   connection: ConnectionProfile,
   schema: SchemaSnapshot,
+  { signal, rejected }: DraftOptions = {},
 ): Promise<Draft> {
-  const likelyDatabaseQuestion = looksLikeDatabaseQuestion(question);
   const model = createModel(modelProfile).withStructuredOutput(DraftJsonSchema, {
     method: 'functionCalling',
     name: 'text_to_sql_draft',
@@ -199,7 +234,7 @@ export async function createDraft(
   const schemaText = schema.tables
     .map(
       table =>
-        `${table.schema ? `${table.schema}.` : ''}${table.name}(${table.columns.map(column => `${column.name}:${column.type}`).join(', ')})`,
+        `${tableName(table)}(${table.columns.map(column => `${column.name}:${column.type}`).join(', ')})`,
     )
     .join('\n');
 
@@ -212,12 +247,20 @@ export async function createDraft(
         .join('\n')
     : 'No foreign-key relationships were discovered. Only join tables when the user provides a valid relationship.';
 
-  const response = await model.invoke([
+  const messages: Array<[string, string]> = [
     [
       'system',
-      `You are a strict read-only Text-to-SQL planner. Return JSON only. Treat questions about data, records, users, tables, columns, schema, row counts, table counts, recent records, latest users, or top values as database questions. The application routing hint for this request is ${likelyDatabaseQuestion ? 'DATABASE-RELATED' : 'UNKNOWN'}. If the hint is DATABASE-RELATED, never set isDatabaseQuestion false. For example, "How many rows are in each table?" is valid and should become one UNION ALL query with COUNT(*) for the discovered tables. "Show me the 10 most recent records", "Find the top 10 values by count", and "Find the latest 10 users" are also database questions. For latest/recent requests, use a discovered timestamp column such as created_at or updated_at; if no suitable discovered column exists, keep isDatabaseQuestion true, leave sql empty, and explain exactly what the user should specify. If a database question is vague, keep isDatabaseQuestion true and ask for the missing table or column instead of marking it off-topic. Set isDatabaseQuestion false only when the request is clearly unrelated to this connected database. Never invent tables or columns. Use the discovered foreign-key relationships when choosing JOINs. For joins, use explicit JOIN ... ON clauses and select only discovered columns. Generate one parameter-free SELECT or read-only WITH query for ${connection.dialect}. Always include LIMIT ${connection.maxRows} unless the query is a single aggregate. Do not use comments, DDL, DML, system functions, or multiple statements. Explain the query briefly without revealing private chain-of-thought. Schema:\n${schemaText}\nRelationships:\n${relationshipText}`,
+      buildSystemPrompt({
+        connection,
+        likelyDatabaseQuestion: looksLikeDatabaseQuestion(question),
+        schemaText,
+        relationshipText,
+      }),
     ],
     ['user', question],
-  ]);
+  ];
+  if (rejected) messages.push(['user', buildRepairPrompt(rejected.sql, rejected.errors)]);
+
+  const response = await model.invoke(messages, { signal });
   return DraftSchema.parse(response);
 }

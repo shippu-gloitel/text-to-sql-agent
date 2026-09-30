@@ -1,6 +1,7 @@
 import { END, START, StateGraph, interrupt } from '@langchain/langgraph';
 import { executeReadOnly } from '../db';
-import { addSafetyLimit, validateSql } from '../../security/sql-policy';
+import { UserFacingError } from '../error';
+import { enforceRowLimit, validateSql } from '../../security/sql-policy';
 import { AGENT_NODES } from './constant';
 import { checkpointer } from './memory';
 import { AgentState, type AgentDecision } from './state';
@@ -14,6 +15,7 @@ export const graph = new StateGraph(AgentState)
       explanation: state.explanation,
       tables: state.tables,
       checks: state.checks,
+      errors: state.validationErrors ?? [],
     }) as AgentDecision;
     return {
       decision,
@@ -22,16 +24,25 @@ export const graph = new StateGraph(AgentState)
   })
   .addNode(AGENT_NODES.REVALIDATE, async state => {
     const validation = validateSql(state.sql, state.connection.dialect, state.allowedObjects);
-    if (!validation.valid) throw new Error(validation.errors.join(' '));
+    if (!validation.valid) return { validationErrors: validation.errors };
     return {
-      sql: addSafetyLimit(validation.sql, state.connection.maxRows),
+      sql: enforceRowLimit(validation.sql, state.connection.dialect, state.connection.maxRows),
       tables: validation.tables,
       checks: validation.checks,
+      validationErrors: [],
     };
   })
-  .addNode(AGENT_NODES.EXECUTE, async state => ({
-    result: await executeReadOnly(state.connection, state.sql),
-  }))
+  .addNode(AGENT_NODES.EXECUTE, async state => {
+    // Validate again right before execution so nothing unchecked can ever reach the database.
+    const validation = validateSql(state.sql, state.connection.dialect, state.allowedObjects);
+    if (!validation.valid) throw new UserFacingError(validation.errors.join(' '));
+    return {
+      result: await executeReadOnly(
+        state.connection,
+        enforceRowLimit(validation.sql, state.connection.dialect, state.connection.maxRows),
+      ),
+    };
+  })
   .addEdge(START, AGENT_NODES.APPROVAL)
   .addConditionalEdges(AGENT_NODES.APPROVAL, state => {
     if (state.decision?.decision === 'approve') return AGENT_NODES.EXECUTE;

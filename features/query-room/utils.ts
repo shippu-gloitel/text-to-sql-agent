@@ -6,8 +6,16 @@ import {
   type ConnectionProfile,
   type ModelProfile,
   type QueryResult,
+  type StreamEvent,
 } from '@/lib/types';
-import { LEGACY_STORAGE_KEYS, readStorage, STORAGE_KEYS } from '@/lib/storage';
+import { decryptWithDataKey, encryptWithDataKey, type DataEnvelope } from '@/lib/security/vault';
+import {
+  LEGACY_STORAGE_KEYS,
+  readStorage,
+  removeStorage,
+  STORAGE_KEYS,
+  writeStorage,
+} from '@/lib/storage';
 import type { ChatMessage, ChatThread, ModelForm, SetupForm } from './types';
 
 export const initialSetup: SetupForm = {
@@ -61,14 +69,34 @@ export function isChatThread(value: unknown): value is ChatThread {
   );
 }
 
-export function readThreads() {
-  const current = readStorage<unknown>(STORAGE_KEYS.threads, null);
-  if (Array.isArray(current)) return current.filter(isChatThread);
+// Approvals saved by older versions cannot be resumed (they have no run id).
+function expireLegacyApprovals(thread: ChatThread): ChatThread {
+  return {
+    ...thread,
+    messages: thread.messages.map(message =>
+      message.approval && !message.approval.runId
+        ? {
+            ...message,
+            approval: undefined,
+            text: 'This approval expired. Ask the question again to get a fresh query.',
+          }
+        : message,
+    ),
+  };
+}
 
-  const legacy = readStorage<unknown>(LEGACY_STORAGE_KEYS.threads, null);
-  if (!Array.isArray(legacy) || !legacy.length) return [];
+function readLegacyThreads(): ChatThread[] {
+  return readLegacyThreadList().map(expireLegacyApprovals);
+}
 
-  const messages = legacy as ChatMessage[];
+function readLegacyThreadList(): ChatThread[] {
+  const v2 = readStorage<unknown>(LEGACY_STORAGE_KEYS.threadsV2, null);
+  if (Array.isArray(v2)) return v2.filter(isChatThread);
+
+  const v1 = readStorage<unknown>(LEGACY_STORAGE_KEYS.threadsV1, null);
+  if (!Array.isArray(v1) || !v1.length) return [];
+
+  const messages = v1 as ChatMessage[];
   if (!messages.some(message => message.role === 'user')) return [];
 
   const timestamp = Date.now();
@@ -81,6 +109,62 @@ export function readThreads() {
       updatedAt: timestamp,
     },
   ];
+}
+
+/**
+ * Loads encrypted chat history. Plaintext history from older versions is migrated into encrypted
+ * storage once and then removed.
+ */
+export async function loadThreads(threadsKey: string): Promise<ChatThread[]> {
+  const envelope = readStorage<DataEnvelope | null>(STORAGE_KEYS.threads, null);
+  if (envelope) {
+    try {
+      const threads = await decryptWithDataKey<unknown>(envelope, threadsKey);
+      return Array.isArray(threads) ? threads.filter(isChatThread) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  const legacy = readLegacyThreads();
+  if (legacy.length && (await saveThreads(legacy, threadsKey))) {
+    Object.values(LEGACY_STORAGE_KEYS).forEach(removeStorage);
+  }
+  return legacy;
+}
+
+// Keeps saved history small enough for browser storage; full results stay in memory.
+const PERSISTED_ROWS_PER_RESULT = 200;
+
+function compactThreads(threads: ChatThread[], rowsPerResult: number): ChatThread[] {
+  return threads.map(thread => ({
+    ...thread,
+    messages: thread.messages.map(message => {
+      if (!message.result || message.result.rows.length <= rowsPerResult) return message;
+      return {
+        ...message,
+        result: {
+          ...message.result,
+          rows: message.result.rows.slice(0, rowsPerResult),
+          truncated: true,
+        },
+      };
+    }),
+  }));
+}
+
+/** Encrypts and saves chat history, dropping result rows if browser storage is full. */
+export async function saveThreads(threads: ChatThread[], threadsKey: string) {
+  for (const rowsPerResult of [PERSISTED_ROWS_PER_RESULT, 20, 0]) {
+    try {
+      const envelope = await encryptWithDataKey(compactThreads(threads, rowsPerResult), threadsKey);
+      writeStorage(STORAGE_KEYS.threads, envelope);
+      return true;
+    } catch {
+      // Most likely the storage quota; retry with fewer saved rows.
+    }
+  }
+  return false;
 }
 
 export function makeConnection(form: SetupForm): ConnectionProfile {
@@ -141,12 +225,14 @@ export function updateMessage(messages: ChatMessage[], id: string, update: Parti
 export async function consumeStream(
   url: string,
   body: unknown,
-  onEvent: (event: Record<string, unknown>) => void,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
 ) {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok) {
     let message = 'The request could not be started.';
@@ -170,10 +256,10 @@ export async function consumeStream(
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
     lines.forEach(line => {
-      if (line.trim()) onEvent(JSON.parse(line) as Record<string, unknown>);
+      if (line.trim()) onEvent(JSON.parse(line) as StreamEvent);
     });
   }
-  if (buffer.trim()) onEvent(JSON.parse(buffer) as Record<string, unknown>);
+  if (buffer.trim()) onEvent(JSON.parse(buffer) as StreamEvent);
 }
 
 export function formatCell(value: unknown) {

@@ -7,6 +7,8 @@ import {
   decryptVault,
   encryptSessionVault,
   encryptVault,
+  generateDataKey,
+  vaultNeedsUpgrade,
   type VaultEnvelope,
 } from '@/lib/security/vault';
 import {
@@ -18,7 +20,7 @@ import {
   writeStorage,
   STORAGE_KEYS,
 } from '@/lib/storage';
-import type { QueryResult } from '@/lib/types';
+import type { StreamEvent } from '@/lib/types';
 import type { ChatMessage, ChatThread, StoredProfiles, CheckState, Theme } from './types';
 import {
   consumeStream,
@@ -27,8 +29,9 @@ import {
   initialModel,
   initialSetup,
   makeConnection,
+  loadThreads,
   makeModel,
-  readThreads,
+  saveThreads,
   threadTitle,
   updateMessage,
 } from './utils';
@@ -65,25 +68,29 @@ export default function QueryRoom() {
   const [unlockError, setUnlockError] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [threadDeleteTarget, setThreadDeleteTarget] = useState<ChatThread | null>(null);
-  const [theme, setTheme] = useState<Theme>('dark');
+  // The inline script in the root layout applies the saved theme before hydration.
+  const [theme, setTheme] = useState<Theme>(() =>
+    typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light'
+      ? 'light'
+      : 'dark',
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const toggleTheme = () => setTheme(current => (current === 'dark' ? 'light' : 'dark'));
 
-  const applyProfiles = useCallback((value: StoredProfiles) => {
-    setProfiles(value);
-    const savedThreads = readThreads();
+  const applyProfiles = useCallback(async (value: StoredProfiles & { threadsKey: string }) => {
+    const savedThreads = await loadThreads(value.threadsKey);
     const activeThread = [...savedThreads].sort((a, b) => b.updatedAt - a.updatedAt)[0];
     setThreads(savedThreads);
     setThreadId(activeThread?.id ?? `thread-${crypto.randomUUID()}`);
     setMessages(activeThread?.messages.length ? activeThread.messages : [defaultMessage]);
+    setProfiles(value);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     const restoreWorkspace = async () => {
-      const savedTheme = window.localStorage.getItem('queryroom.theme');
-      if (savedTheme === 'light' || savedTheme === 'dark') setTheme(savedTheme);
       const savedVault = readVault();
       setVault(savedVault);
       if (savedVault) {
@@ -91,7 +98,10 @@ export default function QueryRoom() {
         if (sessionVault) {
           try {
             const restored = await decryptSessionVault<StoredProfiles>(sessionVault);
-            if (!cancelled) applyProfiles(restored);
+            // Workspaces saved before chat history was encrypted must be unlocked once to upgrade.
+            if (!restored.threadsKey) clearSessionVault();
+            else if (!cancelled)
+              await applyProfiles({ ...restored, threadsKey: restored.threadsKey });
           } catch {
             clearSessionVault();
           }
@@ -109,7 +119,11 @@ export default function QueryRoom() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem('queryroom.theme', theme);
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.theme, theme);
+    } catch {
+      // Local storage may be disabled by the browser.
+    }
   }, [theme]);
 
   useEffect(() => {
@@ -117,14 +131,19 @@ export default function QueryRoom() {
   }, [messages]);
 
   useEffect(() => {
-    if (!profiles) return;
-    writeStorage(STORAGE_KEYS.threads, threads);
+    const threadsKey = profiles?.threadsKey;
+    if (!threadsKey) return;
+    // Debounced so a streaming answer does not re-encrypt history on every event.
+    const timer = window.setTimeout(() => void saveThreads(threads, threadsKey), 400);
+    return () => window.clearTimeout(timer);
   }, [profiles, threads]);
 
   useEffect(() => {
     if (!profiles || !threadId || !messages.some(message => message.role === 'user')) return;
     setThreads(current => {
       const existing = current.find(thread => thread.id === threadId);
+      // Selecting a thread restores its saved messages; that is not a new update.
+      if (existing?.messages === messages) return current;
       const updated: ChatThread = {
         id: threadId,
         title:
@@ -144,8 +163,15 @@ export default function QueryRoom() {
     try {
       setUnlockError('');
       const restored = await decryptVault<StoredProfiles>(vault, passphrase);
-      writeSessionVault(await encryptSessionVault(restored));
-      applyProfiles(restored);
+      const value = { ...restored, threadsKey: restored.threadsKey ?? generateDataKey() };
+      if (!restored.threadsKey || vaultNeedsUpgrade(vault)) {
+        // Re-encrypt older vaults with the current key-derivation strength and a history key.
+        const upgraded = await encryptVault(value, passphrase);
+        writeStorage(STORAGE_KEYS.vault, upgraded);
+        setVault(upgraded);
+      }
+      writeSessionVault(await encryptSessionVault(value));
+      await applyProfiles(value);
     } catch {
       setUnlockError('That passphrase could not unlock this workspace.');
     }
@@ -234,12 +260,16 @@ export default function QueryRoom() {
   const saveWorkspace = async () => {
     if (!passphrase || dbCheck.state !== 'success' || modelCheck.state !== 'success') return;
     try {
-      const value = { connection: makeConnection(setup), model: makeModel(modelForm) };
+      const value = {
+        connection: makeConnection(setup),
+        model: makeModel(modelForm),
+        threadsKey: generateDataKey(),
+      };
       const encrypted = await encryptVault(value, passphrase);
       writeStorage(STORAGE_KEYS.vault, encrypted);
       writeSessionVault(await encryptSessionVault(value));
       setVault(encrypted);
-      applyProfiles(value);
+      await applyProfiles(value);
     } catch {
       setDbCheck({ state: 'error', message: 'Complete the required fields before saving.' });
     }
@@ -254,12 +284,14 @@ export default function QueryRoom() {
     setVault(null);
     setProfiles(null);
     setPassphrase('');
+    setThreads([]);
     setMessages([defaultMessage]);
     setDbCheck({ state: 'idle' });
     setModelCheck({ state: 'idle' });
   };
 
   const lockWorkspace = () => {
+    abortRef.current?.abort();
     clearSessionVault();
     setProfiles(null);
     setPassphrase('');
@@ -318,73 +350,81 @@ export default function QueryRoom() {
     setThreadDeleteTarget(null);
   };
 
+  const handleStreamEvent = (assistantId: string, event: StreamEvent) => {
+    const update = (patch: Parameters<typeof updateMessage>[2]) =>
+      setMessages(current => updateMessage(current, assistantId, patch));
+
+    switch (event.type) {
+      case 'stage.started':
+        setMessages(current =>
+          updateMessage(current, assistantId, {
+            currentStage: event.stage,
+            stages: [...(current.find(item => item.id === assistantId)?.stages ?? []), event.stage],
+          }),
+        );
+        break;
+      case 'sql.ready':
+        update({ sql: event.sql });
+        break;
+      case 'approval.required':
+        update({
+          approval: {
+            runId: event.runId,
+            sql: event.sql,
+            explanation: event.explanation,
+            tables: event.tables ?? [],
+            checks: event.checks ?? [],
+            errors: event.errors ?? [],
+          },
+          sql: event.errors?.length ? undefined : event.sql,
+          running: false,
+          currentStage: 'Waiting for approval',
+        });
+        break;
+      case 'result.completed':
+        update({ result: event.result, currentStage: 'Results ready', running: false });
+        break;
+      case 'run.completed':
+        update({ text: event.answer, running: false, currentStage: undefined });
+        break;
+      case 'run.error':
+        update({ text: event.message, running: false, rejected: true, currentStage: undefined });
+        break;
+    }
+  };
+
   const streamRun = async (url: string, body: unknown, assistantId: string) => {
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      await consumeStream(url, body, event => {
-        const type = String(event.type);
-        if (type === 'stage.started')
-          setMessages(current =>
-            updateMessage(current, assistantId, {
-              currentStage: String(event.stage),
-              stages: [
-                ...(current.find(item => item.id === assistantId)?.stages ?? []),
-                String(event.stage),
-              ],
-            }),
-          );
-        if (type === 'sql.ready')
-          setMessages(current => updateMessage(current, assistantId, { sql: String(event.sql) }));
-        if (type === 'approval.required')
-          setMessages(current =>
-            updateMessage(current, assistantId, {
-              approval: {
-                sql: String(event.sql),
-                explanation: String(event.explanation),
-                tables: (event.tables as string[]) ?? [],
-                checks: (event.checks as string[]) ?? [],
-              },
-              running: false,
-              currentStage: 'Waiting for approval',
-            }),
-          );
-        if (type === 'result.completed')
-          setMessages(current =>
-            updateMessage(current, assistantId, {
-              result: event.result as QueryResult,
-              currentStage: 'Results ready',
-              running: false,
-            }),
-          );
-        if (type === 'run.completed')
-          setMessages(current =>
-            updateMessage(current, assistantId, {
-              text: String(event.answer),
-              running: false,
-              currentStage: undefined,
-            }),
-          );
-        if (type === 'run.error')
-          setMessages(current =>
-            updateMessage(current, assistantId, {
-              text: String(event.message),
-              running: false,
-              rejected: true,
-              currentStage: undefined,
-            }),
-          );
-      });
+      await consumeStream(
+        url,
+        body,
+        event => handleStreamEvent(assistantId, event),
+        controller.signal,
+      );
     } catch (error) {
+      const stopped = controller.signal.aborted;
       setMessages(current =>
         updateMessage(current, assistantId, {
-          text: error instanceof Error ? error.message : 'The stream ended unexpectedly.',
+          text: stopped
+            ? 'Stopped. Nothing further will run for this request.'
+            : error instanceof Error
+              ? error.message
+              : 'The stream ended unexpectedly.',
           running: false,
-          rejected: true,
+          rejected: !stopped,
+          stopped,
+          currentStage: undefined,
         }),
       );
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
     }
   };
+
+  const stopRun = () => abortRef.current?.abort();
 
   const submitQuestion = async () => {
     if (!profiles || !threadId || !question.trim() || busy) return;
@@ -416,11 +456,14 @@ export default function QueryRoom() {
     decision: 'approve' | 'reject' | 'edit',
     sql?: string,
   ) => {
-    if (!profiles || !threadId || busy) return;
+    const runId = messages.find(message => message.id === assistantId)?.approval?.runId;
+    if (!profiles || !threadId || !runId || busy) return;
     setBusy(true);
     setMessages(current =>
       updateMessage(current, assistantId, {
         approval: undefined,
+        text: undefined,
+        rejected: false,
         running: decision !== 'reject',
         currentStage:
           decision === 'reject'
@@ -431,11 +474,7 @@ export default function QueryRoom() {
       }),
     );
 
-    await streamRun(
-      '/api/agent/resume',
-      { threadId, decision, sql, connection: profiles.connection },
-      assistantId,
-    );
+    await streamRun('/api/agent/resume', { threadId, runId, decision, sql }, assistantId);
   };
   if (!hydrated) return <div className='loading-screen'>Loading workspace…</div>;
 
@@ -463,6 +502,7 @@ export default function QueryRoom() {
         busy={busy}
         scrollRef={scrollRef}
         submitQuestion={submitQuestion}
+        stopRun={stopRun}
         resume={resume}
         startNewThread={startNewThread}
         selectThread={selectThread}
