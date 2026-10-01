@@ -78,6 +78,7 @@ export const resumeRequestSchema = z.object({
   runId: z.string().min(8).max(120),
   decision: z.enum(['approve', 'reject', 'edit']),
   sql: z.string().max(20000).optional(),
+  connection: connectionProfileSchema,
 });
 
 export type QueryColumn = { name: string; type?: string };

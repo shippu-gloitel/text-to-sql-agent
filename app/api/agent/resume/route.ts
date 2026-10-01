@@ -7,8 +7,8 @@ export async function POST(request: Request) {
   if (!parsed.success)
     return Response.json({ message: 'The approval request was invalid.' }, { status: 400 });
 
-  const { threadId, runId, decision, sql } = parsed.data;
+  const { threadId, runId, decision, sql, connection } = parsed.data;
   return ndjsonResponse(request, (emit, signal) =>
-    resumeAgent(threadId, runId, { decision, sql }, emit, signal),
+    resumeAgent(threadId, runId, { decision, sql }, connection, emit, signal),
   );
 }

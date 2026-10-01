@@ -17,3 +17,6 @@
 .claude
 docs
 dummy
+
+# local approval store (SQLite)
+.data

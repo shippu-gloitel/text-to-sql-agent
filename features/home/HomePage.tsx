@@ -114,7 +114,7 @@ const FEATURES: Array<{ icon: LucideIcon; title: string; text: string }> = [
 const SECURITY = [
   'Credentials and chat history are encrypted in your browser with AES-GCM. The key comes from your passphrase through PBKDF2 with 600,000 iterations.',
   'The model sees your question, the schema and your optional description, never your credentials or query results.',
-  'Nothing is written to disk on the server. Pending approvals and a one-minute schema cache live in memory only, and approvals expire after 30 minutes.',
+  'The server never stores credentials or query results. Pending approvals (just the question and SQL) are kept in a local SQLite file and deleted once you act on them or after 30 minutes.',
   'Optional Basic authentication, a database host allowlist and a SQLite directory allowlist for shared deployments.',
   'Designed as a second layer: connect with a read-only database user and both protections apply.',
 ];
@@ -138,7 +138,7 @@ const FAQS = [
   {
     question: 'Where is my data stored?',
     answer:
-      'In your browser, encrypted with your passphrase. The server writes nothing to disk; it only keeps pending approvals and a short-lived schema cache in memory. Clearing the workspace removes everything from the browser.',
+      'Credentials, history and results stay in your browser, encrypted with your passphrase. The server only saves pending approvals (the question and SQL, never credentials or results) in a local SQLite file until you act on them, plus a short-lived schema cache in memory. Clearing the workspace removes everything from the browser.',
   },
   {
     question: 'What about very large tables?',

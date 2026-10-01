@@ -449,7 +449,12 @@ export default function QueryRoom() {
       }),
     );
 
-    await streamRun('/api/agent/resume', { threadId, runId, decision, sql }, assistantId);
+    // The connection is sent again because the server never stores credentials.
+    await streamRun(
+      '/api/agent/resume',
+      { threadId, runId, decision, sql, connection: profiles.connection },
+      assistantId,
+    );
   };
   if (!hydrated) return <div className='loading'>Loading…</div>;
 
