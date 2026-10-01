@@ -5,6 +5,7 @@ import { useState } from 'react';
 import type { Approval, ChatMessage } from '../types';
 import { useCopy } from '../useCopy';
 import SqlCode from './SqlCode';
+import SqlEditor from './SqlEditor';
 
 const ResultCard = dynamic(() => import('./ResultCard'));
 
@@ -130,6 +131,12 @@ function ApprovalCard({
   const [copied, copy] = useCopy();
   const hasErrors = approval.errors.length > 0;
 
+  const recheck = () => {
+    if (busy || !editedSql.trim()) return;
+    setEditing(false);
+    resume(messageId, 'edit', editedSql);
+  };
+
   return (
     <motion.section
       className='card approval-card'
@@ -159,13 +166,11 @@ function ApprovalCard({
       <div className='card-body'>
         {approval.explanation && <p>{approval.explanation}</p>}
         {editing ? (
-          <textarea
-            className='code'
+          <SqlEditor
             value={editedSql}
-            onChange={event => setEditedSql(event.target.value)}
-            aria-label='Edit SQL'
-            spellCheck={false}
-            autoFocus
+            onChange={setEditedSql}
+            onSubmit={recheck}
+            onCancel={() => setEditing(false)}
           />
         ) : (
           <SqlCode sql={approval.sql} />
@@ -179,13 +184,13 @@ function ApprovalCard({
           >
             <CircleAlert size={15} />
             <div>
-              This SQL did not pass the safety check:
+              This SQL can’t run yet:
               <ul>
                 {approval.errors.map(error => (
                   <li key={error}>{error}</li>
                 ))}
               </ul>
-              Edit it again to fix the problem, or reject it.
+              Edit the SQL to fix it, or reject it.
             </div>
           </motion.div>
         ) : (
@@ -206,10 +211,7 @@ function ApprovalCard({
           <>
             <button
               className='btn btn-primary'
-              onClick={() => {
-                setEditing(false);
-                resume(messageId, 'edit', editedSql);
-              }}
+              onClick={recheck}
               disabled={busy || !editedSql.trim()}
             >
               Re-check SQL

@@ -113,8 +113,8 @@ const FEATURES: Array<{ icon: LucideIcon; title: string; text: string }> = [
 
 const SECURITY = [
   'Credentials and chat history are encrypted in your browser with AES-GCM. The key comes from your passphrase through PBKDF2 with 600,000 iterations.',
-  'The model sees your question, the schema and your optional description, never your credentials or query results.',
-  'The server never stores credentials or query results. Pending approvals (just the question and SQL) are kept in a local SQLite file and deleted once you act on them or after 30 minutes.',
+  'The model sees your question, the schema, your optional description and earlier questions with their SQL from the same conversation, never your credentials or query results.',
+  'The server keeps nothing between requests. Pending approvals live in your browser, and any SQL you approve is checked again on the server before it runs.',
   'Optional Basic authentication, a database host allowlist and a SQLite directory allowlist for shared deployments.',
   'Designed as a second layer: connect with a read-only database user and both protections apply.',
 ];
@@ -123,7 +123,7 @@ const FAQS = [
   {
     question: 'What does the model see?',
     answer:
-      'Your question, the table and column names with their types and relationships, and the description you gave the database. It never receives your credentials or the rows your queries return.',
+      'Your question, the table and column names with their types and relationships, the description you gave the database, and earlier questions and SQL from the same conversation (so follow-ups work). It never receives your credentials or the rows your queries return.',
   },
   {
     question: 'Can it change my data?',
@@ -138,7 +138,7 @@ const FAQS = [
   {
     question: 'Where is my data stored?',
     answer:
-      'Credentials, history and results stay in your browser, encrypted with your passphrase. The server only saves pending approvals (the question and SQL, never credentials or results) in a local SQLite file until you act on them, plus a short-lived schema cache in memory. Clearing the workspace removes everything from the browser.',
+      'Everything stays in your browser, encrypted with your passphrase: connections, history, results and pending approvals. The server stores nothing between requests apart from a short-lived schema cache in memory. Clearing the workspace removes everything.',
   },
   {
     question: 'What about very large tables?',

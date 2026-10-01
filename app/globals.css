@@ -1276,22 +1276,66 @@ kbd {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-subtle);
+  font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  tab-size: 2;
 }
 
-textarea.code {
-  width: 100%;
+/* Editor: the highlighted layer sets the size; the transparent textarea sits exactly on top. */
+.sql-editor {
+  position: relative;
+}
+
+.sql-editor-highlight {
   min-height: 120px;
-  outline: none;
-  resize: vertical;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-textarea.code:focus {
+.sql-editor .code {
+  font-variant-ligatures: none;
+  letter-spacing: normal;
+  word-spacing: normal;
+}
+
+.sql-editor-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  outline: none;
+  resize: none;
+}
+
+.sql-editor-input::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: transparent;
+}
+
+.sql-editor-input:focus {
   border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.sql-editor-hint {
+  margin: -4px 0 0;
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+/* Keyboard shortcuts mean nothing on touch screens. */
+@media (pointer: coarse) {
+  .sql-editor-hint {
+    display: none;
+  }
 }
 
 .sql-keyword {
@@ -2355,8 +2399,8 @@ html:has(.home) {
   .input,
   .input-group input,
   .composer textarea,
-  textarea.code,
-  .thread-edit .input {
+  .thread-edit .input,
+  .sql-editor .code {
     font-size: 16px;
   }
 

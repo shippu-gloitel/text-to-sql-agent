@@ -65,6 +65,23 @@ describe('read-only SQL policy', () => {
     expect(validateSql(sql, dialect).valid).toBe(false);
   });
 
+  test.each([
+    ['postgresql', 'SELECT * FROM users u WHERE u.user_id = :user_id LIMIT 5', ':user_id'],
+    ['postgresql', 'SELECT * FROM users WHERE user_id = $1', '$1'],
+    ['mysql', 'SELECT * FROM users WHERE user_id = ?', '?'],
+    ['sqlite', 'SELECT * FROM users WHERE user_id = :uid', ':uid'],
+  ] as const)('rejects placeholders: %s %s', (dialect, sql, placeholder) => {
+    const result = validateSql(sql, dialect);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toContain(`placeholder ${placeholder}`);
+  });
+
+  test('allows PostgreSQL casts that look like placeholders', () => {
+    expect(
+      validateSql("SELECT created_at::date, '10:30'::time FROM users", 'postgresql').valid,
+    ).toBe(true);
+  });
+
   test('ignores blocked words inside string literals and quoted identifiers', () => {
     expect(
       validateSql("SELECT id FROM users WHERE status = 'DELETE'", 'postgresql', ['public.users'])

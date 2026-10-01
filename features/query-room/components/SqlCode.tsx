@@ -18,17 +18,21 @@ function tokenClass(token: string) {
   return undefined;
 }
 
-/** Lightweight SQL highlighting; rendering only, never used to interpret the query. */
-export default function SqlCode({ sql }: { sql: string }) {
+/** Highlighted SQL tokens; rendering only, never used to interpret the query. */
+export function SqlTokens({ sql }: { sql: string }) {
   const tokens = sql.match(TOKEN) ?? [sql];
+  return tokens.map((token, index) => (
+    <span key={index} className={tokenClass(token)}>
+      {token}
+    </span>
+  ));
+}
+
+export default function SqlCode({ sql }: { sql: string }) {
   return (
     <pre className='code'>
       <code>
-        {tokens.map((token, index) => (
-          <span key={index} className={tokenClass(token)}>
-            {token}
-          </span>
-        ))}
+        <SqlTokens sql={sql} />
       </code>
     </pre>
   );

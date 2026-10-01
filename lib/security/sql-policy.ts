@@ -105,6 +105,42 @@ function collectFunctionNames(node: unknown, names: string[] = []) {
   return names;
 }
 
+/** Finds bind parameters (:name, $1, @var, ?), which cannot run because no values are bound. */
+function findPlaceholder(node: unknown): string | undefined {
+  if (!node || typeof node !== 'object') return undefined;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = findPlaceholder(item);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const record = node as AstNode;
+  if (record.type === 'param') return `:${String(record.value)}`;
+  if (record.type === 'var') return `${String(record.prefix ?? '')}${String(record.name)}`;
+  if (record.type === 'origin' && record.value === '?') return '?';
+  for (const value of Object.values(record)) {
+    const found = findPlaceholder(value);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** Checks that need the parsed query: statement type, functions and placeholders. */
+function checkParsedQuery(ast: SelectAst | undefined) {
+  const errors: string[] = [];
+  if (ast?.type !== 'select') errors.push('The query could not be verified as a SELECT statement.');
+  if (ast?.into?.position) errors.push('SELECT INTO is not allowed.');
+  const blocked = collectFunctionNames(ast).find(name => dangerousFunctionNames.test(name));
+  if (blocked) errors.push(`The function ${blocked}() is not allowed.`);
+  const placeholder = findPlaceholder(ast);
+  if (placeholder)
+    errors.push(
+      `The placeholder ${placeholder} has no value. Write the actual value in the SQL instead.`,
+    );
+  return errors;
+}
+
 /** Allowlist entries match exactly, or by table name when one side is unqualified. */
 export function matchesAllowedObject(table: string, allowedObjects: string[]) {
   const actual = table.toLowerCase();
@@ -156,11 +192,7 @@ export function validateSql(
   if (!errors.length) {
     try {
       ({ tableList, ast } = parseSelect(normalized, dialect));
-      if (ast?.type !== 'select')
-        errors.push('The query could not be verified as a SELECT statement.');
-      if (ast?.into?.position) errors.push('SELECT INTO is not allowed.');
-      const blocked = collectFunctionNames(ast).find(name => dangerousFunctionNames.test(name));
-      if (blocked) errors.push(`The function ${blocked}() is not allowed.`);
+      errors.push(...checkParsedQuery(ast));
     } catch {
       errors.push('The SQL could not be parsed for this database dialect.');
     }

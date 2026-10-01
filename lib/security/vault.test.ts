@@ -34,7 +34,9 @@ describe('vault', () => {
       rows: Array.from({ length: 5000 }, (_, index) => ({ index, text: 'x'.repeat(40) })),
     };
     const envelope = await encryptWithDataKey(large, key);
-    expect(envelope.ciphertext).not.toContain('xxxx');
+    // Random ciphertext can contain any short base64 run, so look for a long run of the plaintext
+    // in the decoded bytes instead.
+    expect(atob(envelope.ciphertext)).not.toContain('x'.repeat(20));
     expect(await decryptWithDataKey(envelope, key)).toEqual(large);
     await expect(decryptWithDataKey(envelope, generateDataKey())).rejects.toThrow();
   });

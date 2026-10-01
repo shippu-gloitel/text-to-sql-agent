@@ -6,10 +6,20 @@ export class UserFacingError extends Error {
   }
 }
 
-function redact(message: string) {
+export function redact(message: string) {
   return message
     .replace(/sk-[A-Za-z0-9_-]+/g, '[redacted-key]')
     .replace(/(password|api[_-]?key)=([^\s&]+)/gi, '$1=[redacted]');
+}
+
+/** Writes unexpected errors to the server log (e.g. Vercel logs) with secrets masked. */
+export function logServerError(context: string, error: unknown) {
+  if (error instanceof UserFacingError) return;
+  if (error instanceof Error && error.name === 'AbortError') return;
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  // Server logs (e.g. Vercel) are the only place these details are visible.
+  // eslint-disable-next-line no-console
+  console.error(`[${context}] ${redact(detail)}`);
 }
 
 export function safeAgentError(error: unknown) {

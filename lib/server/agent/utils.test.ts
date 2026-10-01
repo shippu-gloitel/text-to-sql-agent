@@ -4,8 +4,11 @@ import {
   isGreeting,
   isRowCountQuestion,
   isTableListQuestion,
+  inferRelationships,
+  relationshipText,
   restrictSchema,
   rowCountResult,
+  tableHint,
 } from './utils';
 
 describe('extractPastedSql', () => {
@@ -81,6 +84,101 @@ describe('row count questions', () => {
     );
     expect(result.columns.map(column => column.name)).toEqual(['table', 'rows']);
     expect(result.rows).toEqual([{ table: 'users', rows: 3 }]);
+  });
+});
+
+describe('relationships', () => {
+  const columns = (...names: string[]) => names.map(name => ({ name, type: 'integer' }));
+  const legacy = {
+    fingerprint: 'x',
+    relationships: [],
+    tables: [
+      {
+        schema: 'public',
+        name: 'users',
+        columns: columns('user_id', 'role_id', 'administrative_sex_id', 'email'),
+      },
+      { schema: 'public', name: 'mas_role', columns: columns('role_id', 'role_name') },
+      {
+        schema: 'public',
+        name: 'mas_administrative_sex',
+        columns: columns('administrative_sex_id', 'name'),
+      },
+      { schema: 'public', name: 'user_mmu', columns: columns('user_mmu_id', 'user_id', 'mmu_id') },
+      { schema: 'public', name: 'mas_mmu', columns: columns('mmu_id', 'mmu_name') },
+      { schema: 'public', name: 'sessions', columns: columns('id', 'user_id') },
+      { schema: 'public', name: 'audit_log', columns: columns('id', 'external_ref_id') },
+    ],
+  };
+
+  test('infers joins from naming conventions when there are no foreign keys', () => {
+    const joins = inferRelationships(legacy).map(
+      r => `${r.fromTable}.${r.fromColumn}->${r.toTable}.${r.toColumn}`,
+    );
+    expect(joins).toEqual([
+      'users.role_id->mas_role.role_id',
+      'users.administrative_sex_id->mas_administrative_sex.administrative_sex_id',
+      'user_mmu.user_id->users.user_id',
+      'user_mmu.mmu_id->mas_mmu.mmu_id',
+      'sessions.user_id->users.user_id',
+    ]);
+  });
+
+  test('does not repeat columns that already have a foreign key', () => {
+    const withForeignKey = {
+      ...legacy,
+      relationships: [
+        {
+          fromSchema: 'public',
+          fromTable: 'sessions',
+          fromColumn: 'user_id',
+          toSchema: 'public',
+          toTable: 'users',
+          toColumn: 'user_id',
+        },
+      ],
+    };
+    const text = relationshipText(withForeignKey);
+    expect(text).toContain(
+      'Foreign keys (enforced by the database):\npublic.sessions.user_id -> public.users.user_id',
+    );
+    expect(text).toContain('Likely relationships inferred from column names');
+    expect(text.match(/public\.sessions\.user_id/g)).toHaveLength(1);
+  });
+
+  test('explains when nothing can be inferred', () => {
+    const schema = {
+      fingerprint: 'x',
+      relationships: [],
+      tables: [{ name: 'notes', columns: columns('id', 'body') }],
+    };
+    expect(relationshipText(schema)).toContain('No relationships were discovered or inferred');
+  });
+});
+
+describe('tableHint', () => {
+  test('lists every table when there are few', () => {
+    const schema = {
+      fingerprint: 'x',
+      relationships: [],
+      tables: [
+        { name: 'a', columns: [] },
+        { name: 'b', columns: [] },
+      ],
+    };
+    expect(tableHint(schema)).toBe('Available tables (2):\n• a\n• b');
+  });
+
+  test('lists every table even when there are many', () => {
+    const tables = Array.from({ length: 250 }, (_, index) => ({
+      schema: 'public',
+      name: `t${index}`,
+      columns: [],
+    }));
+    const hint = tableHint({ fingerprint: 'x', relationships: [], tables });
+    expect(hint.split('\n')).toHaveLength(251);
+    expect(hint).toContain('Available tables (250):');
+    expect(hint).toContain('• public.t249');
   });
 });
 

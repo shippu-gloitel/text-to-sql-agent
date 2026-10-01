@@ -1,5 +1,5 @@
 import type { StreamEvent } from '../types';
-import { safeAgentError } from './error';
+import { logServerError, safeAgentError } from './error';
 
 /**
  * Streams newline-delimited JSON events. Work is cancelled when the client disconnects, and events
@@ -24,6 +24,7 @@ export function ndjsonResponse(
       try {
         await run(emit, abort.signal);
       } catch (error) {
+        logServerError(new URL(request.url).pathname, error);
         emit({ type: 'run.error', message: safeAgentError(error) });
       } finally {
         request.signal.removeEventListener('abort', onClientAbort);

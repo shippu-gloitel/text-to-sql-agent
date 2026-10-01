@@ -1,5 +1,5 @@
 import { introspect } from '@/lib/server/db';
-import { UserFacingError } from '@/lib/server/error';
+import { logServerError, UserFacingError } from '@/lib/server/error';
 import { connectionProfileSchema } from '@/lib/types';
 
 export async function POST(request: Request) {
@@ -7,6 +7,7 @@ export async function POST(request: Request) {
     const profile = connectionProfileSchema.parse(await request.json());
     return Response.json(await introspect(profile, { fresh: true }));
   } catch (error) {
+    logServerError('/api/schema', error);
     return Response.json(
       {
         message:

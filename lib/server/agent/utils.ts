@@ -5,6 +5,7 @@ import {
   type ConnectionProfile,
   type ModelProfile,
   type QueryResult,
+  type HistoryTurn,
   type SchemaSnapshot,
 } from '../../types';
 import { matchesAllowedObject } from '../../security/sql-policy';
@@ -50,7 +51,7 @@ export function tableHint(schema: SchemaSnapshot) {
   const names = schema.tables.map(tableName);
   if (!names.length) return 'No user tables were discovered in the connected database.';
 
-  return `Available tables:\n${names.map(name => `• ${name}`).join('\n')}`;
+  return [`Available tables (${names.length}):`, ...names.map(name => `• ${name}`)].join('\n');
 }
 
 export function createModel(profile: ModelProfile) {
@@ -231,8 +232,96 @@ export function tableCatalogResult(
   );
 }
 
+type Relationship = SchemaSnapshot['relationships'][number];
+type Table = SchemaSnapshot['tables'][number];
+
+// Keeps very large legacy schemas from flooding the prompt.
+const MAX_INFERRED_RELATIONSHIPS = 400;
+
+function formatRelationship(relationship: Relationship) {
+  const from = `${relationship.fromSchema ? `${relationship.fromSchema}.` : ''}${relationship.fromTable}`;
+  const to = `${relationship.toSchema ? `${relationship.toSchema}.` : ''}${relationship.toTable}`;
+  return `${from}.${relationship.fromColumn} -> ${to}.${relationship.toColumn}`;
+}
+
+/** Table names a `<stem>_id` column usually points to, e.g. role_id -> role, roles, mas_role. */
+function tableNamesFor(stem: string) {
+  const plural = stem.endsWith('y') ? `${stem.slice(0, -1)}ies` : `${stem}s`;
+  return [stem, plural, `${stem}es`, `mas_${stem}`, `mas_${plural}`, `m_${stem}`, `tbl_${stem}`];
+}
+
+/**
+ * Many databases (especially older ones) have no foreign keys. This infers likely joins from
+ * naming conventions: a `<stem>_id` column links to a table named after the stem, using that table's
+ * column of the same name or its `id` column. Columns already covered by a foreign key are skipped.
+ */
+export function inferRelationships(schema: SchemaSnapshot): Relationship[] {
+  const known = new Set(
+    schema.relationships.map(relationship =>
+      `${relationship.fromSchema ?? ''}.${relationship.fromTable}.${relationship.fromColumn}`.toLowerCase(),
+    ),
+  );
+  const byName = new Map<string, Table[]>();
+  for (const table of schema.tables) {
+    const key = table.name.toLowerCase();
+    byName.set(key, [...(byName.get(key) ?? []), table]);
+  }
+
+  const inferred: Relationship[] = [];
+  for (const table of schema.tables) {
+    for (const column of table.columns) {
+      const columnName = column.name.toLowerCase();
+      if (!columnName.endsWith('_id') || columnName === 'id') continue;
+      if (known.has(`${table.schema ?? ''}.${table.name}.${column.name}`.toLowerCase())) continue;
+
+      const candidates = tableNamesFor(columnName.slice(0, -3))
+        .flatMap(name => byName.get(name) ?? [])
+        .filter(target => target !== table)
+        // Prefer a target in the same schema.
+        .sort((a, b) => Number(b.schema === table.schema) - Number(a.schema === table.schema));
+      for (const target of candidates) {
+        const targetColumn =
+          target.columns.find(candidate => candidate.name.toLowerCase() === columnName) ??
+          target.columns.find(candidate => candidate.name.toLowerCase() === 'id');
+        if (!targetColumn) continue;
+        inferred.push({
+          fromSchema: table.schema,
+          fromTable: table.name,
+          fromColumn: column.name,
+          toSchema: target.schema,
+          toTable: target.name,
+          toColumn: targetColumn.name,
+        });
+        break;
+      }
+      if (inferred.length >= MAX_INFERRED_RELATIONSHIPS) return inferred;
+    }
+  }
+  return inferred;
+}
+
+/** The relationship section of the prompt: real foreign keys first, then inferred joins. */
+export function relationshipText(schema: SchemaSnapshot) {
+  const sections: string[] = [];
+  if (schema.relationships.length)
+    sections.push(
+      `Foreign keys (enforced by the database):\n${schema.relationships.map(formatRelationship).join('\n')}`,
+    );
+  const inferred = inferRelationships(schema);
+  if (inferred.length)
+    sections.push(
+      `Likely relationships inferred from column names (not enforced by the database; use them when they fit the question):\n${inferred.map(formatRelationship).join('\n')}`,
+    );
+  return (
+    sections.join('\n') ||
+    'No relationships were discovered or inferred. Join only on columns whose names and types clearly match, and state the assumed join in the explanation.'
+  );
+}
+
 export type DraftOptions = {
   signal?: AbortSignal;
+  /** Earlier questions in this conversation and the SQL that answered them (never results). */
+  history?: HistoryTurn[];
   /** A previously rejected attempt, sent back so the model can correct it. */
   rejected?: { sql: string; errors: string[] };
 };
@@ -242,7 +331,7 @@ export async function createDraft(
   modelProfile: ModelProfile,
   connection: ConnectionProfile,
   schema: SchemaSnapshot,
-  { signal, rejected }: DraftOptions = {},
+  { signal, rejected, history }: DraftOptions = {},
 ): Promise<Draft> {
   const model = createModel(modelProfile).withStructuredOutput(DraftJsonSchema, {
     method: 'functionCalling',
@@ -257,15 +346,6 @@ export async function createDraft(
     )
     .join('\n');
 
-  const relationshipText = schema.relationships.length
-    ? schema.relationships
-        .map(
-          relationship =>
-            `${relationship.fromSchema ? `${relationship.fromSchema}.` : ''}${relationship.fromTable}.${relationship.fromColumn} -> ${relationship.toSchema ? `${relationship.toSchema}.` : ''}${relationship.toTable}.${relationship.toColumn}`,
-        )
-        .join('\n')
-    : 'No foreign-key relationships were discovered. Only join tables when the user provides a valid relationship.';
-
   const messages: Array<[string, string]> = [
     [
       'system',
@@ -273,9 +353,13 @@ export async function createDraft(
         connection,
         likelyDatabaseQuestion: looksLikeDatabaseQuestion(question),
         schemaText,
-        relationshipText,
+        relationshipText: relationshipText(schema),
       }),
     ],
+    ...(history ?? []).flatMap((turn): Array<[string, string]> => [
+      ['user', turn.question],
+      ['assistant', turn.sql ? `SQL used:\n${turn.sql}` : 'No SQL was run for this question.'],
+    ]),
     ['user', question],
   ];
   if (rejected) messages.push(['user', buildRepairPrompt(rejected.sql, rejected.errors)]);

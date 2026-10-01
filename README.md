@@ -19,8 +19,10 @@ passphrase.
 ## How a question is answered
 
 1. The server reads the database schema (cached for one minute) and sends it, along with your
-   question and the optional database description from setup, to the model (any
-   OpenAI-compatible endpoint).
+   question, the optional database description from setup, and the earlier questions and SQL of
+   the same conversation (never query results), to the model (any OpenAI-compatible endpoint).
+   Foreign keys are included; for databases without them, likely joins are inferred from column
+   names such as `role_id`.
 2. The draft SQL goes through the safety check in `lib/security/sql-policy.ts`. If it fails, the
    model gets the errors and up to two attempts to correct it.
 3. You see the SQL and approve, edit or reject it. Edited SQL is checked again, and problems are
@@ -39,10 +41,9 @@ approval.
   administration or file functions (`pg_*`, `set_config`, `sleep`, `load_file`, `load_extension`,
   …) are rejected after parsing the query.
 - The outermost query always gets a `LIMIT` no larger than the configured maximum rows.
-- Each run has its own approval checkpoint. Approvals are single-use and expire after 30 minutes.
-- Pending approvals are saved in a local SQLite file (`.data/approvals.sqlite`, git-ignored) so
-  they survive restarts. Only the question, SQL and table names are stored: credentials and query
-  results never are, because the browser sends the connection again when you approve.
+- The server is stateless: a pending approval lives in the browser (in the encrypted chat history).
+  Approve or Edit sends the SQL and connection back, and the server validates the SQL again before
+  running anything. This works on serverless hosts such as Vercel and survives restarts.
 - Chat history, including result rows, is stored encrypted in `localStorage`. Credentials are
   stored in a passphrase vault (PBKDF2-SHA256, 600k iterations, AES-GCM).
 
@@ -79,14 +80,12 @@ features/home       Home page and animated product demo
 features/query-room Workspace UI: setup, unlock and chat screens
 features/shared     Logo, theme store and toggle, motion settings
 lib/security/       SQL policy and browser vault encryption
-lib/server/agent/   LangGraph approval graph, prompts, model calls
+lib/server/agent/   Question handling, approvals, prompts, model calls
 lib/server/db.ts    Database drivers, schema introspection, read-only execution
 proxy.ts            Optional Basic auth
 ```
 
 ## Known limitations
 
-- The approval store is a local SQLite file, so every server process must run on the same machine
-  and share the project directory.
 - PostgreSQL SSL connections do not verify the server certificate.
 - Only OpenAI-compatible model providers are supported.

@@ -4,7 +4,7 @@ import { useSyncExternalStore } from 'react';
 
 export type Theme = 'dark' | 'light';
 
-export const THEME_STORAGE_KEY = 'queryroom.theme';
+const THEME_STORAGE_KEY = 'queryroom.theme';
 const THEME_EVENT = 'queryroom:theme';
 
 // The inline script in the root layout sets data-theme before first paint; this store keeps React

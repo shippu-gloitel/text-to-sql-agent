@@ -405,6 +405,17 @@ export default function QueryRoom() {
     const userText = text.trim();
     if (!profiles || !threadId || !userText || busy) return;
     const assistantId = `assistant-${crypto.randomUUID()}`;
+    // Recent questions and the SQL that answered them, so follow-ups like "also find its
+    // applications" make sense. Result rows are never sent to the model.
+    const history = messages
+      .flatMap((message, index) => {
+        const reply = messages[index + 1];
+        if (message.role !== 'user' || !message.text) return [];
+        return [
+          { question: message.text, sql: reply?.role === 'assistant' ? reply.sql : undefined },
+        ];
+      })
+      .slice(-6);
     setQuestion('');
     setBusy(true);
     setMessages(current => [
@@ -421,7 +432,13 @@ export default function QueryRoom() {
 
     await streamRun(
       '/api/agent/run',
-      { question: userText, connection: profiles.connection, model: profiles.model, threadId },
+      {
+        question: userText,
+        connection: profiles.connection,
+        model: profiles.model,
+        threadId,
+        history,
+      },
       assistantId,
     );
   };
@@ -431,8 +448,8 @@ export default function QueryRoom() {
     decision: 'approve' | 'reject' | 'edit',
     sql?: string,
   ) => {
-    const runId = messages.find(message => message.id === assistantId)?.approval?.runId;
-    if (!profiles || !threadId || !runId || busy) return;
+    const approval = messages.find(message => message.id === assistantId)?.approval;
+    if (!profiles || !threadId || !approval || busy) return;
     setBusy(true);
     setMessages(current =>
       updateMessage(current, assistantId, {
@@ -449,10 +466,17 @@ export default function QueryRoom() {
       }),
     );
 
-    // The connection is sent again because the server never stores credentials.
+    // The server keeps no state, so the approval card sends its SQL and the connection back.
     await streamRun(
       '/api/agent/resume',
-      { threadId, runId, decision, sql, connection: profiles.connection },
+      {
+        threadId,
+        runId: approval.runId,
+        decision,
+        sql: sql ?? approval.sql,
+        explanation: approval.explanation,
+        connection: profiles.connection,
+      },
       assistantId,
     );
   };

@@ -66,18 +66,29 @@ export type SchemaSnapshot = {
   fingerprint: string;
 };
 
+// Earlier turns of the same conversation: the question and the SQL that answered it. Query
+// results are never included, so the model still never sees your data.
+const historyTurnSchema = z.object({
+  question: z.string().max(4000),
+  sql: z.string().max(20000).optional(),
+});
+export type HistoryTurn = z.infer<typeof historyTurnSchema>;
+
 export const runRequestSchema = z.object({
   question: z.string().trim().min(2).max(20000),
   connection: connectionProfileSchema,
   model: modelProfileSchema,
   threadId: z.string().min(8).max(120),
+  history: z.array(historyTurnSchema).max(10).default([]),
 });
 
 export const resumeRequestSchema = z.object({
   threadId: z.string().min(8).max(120),
   runId: z.string().min(8).max(120),
   decision: z.enum(['approve', 'reject', 'edit']),
+  // The browser holds the pending SQL; the server validates it again before running anything.
   sql: z.string().max(20000).optional(),
+  explanation: z.string().max(4000).optional(),
   connection: connectionProfileSchema,
 });
 
@@ -90,7 +101,7 @@ export type QueryResult = {
   durationMs: number;
 };
 
-export type ApprovalRequest = {
+type ApprovalRequest = {
   runId: string;
   sql: string;
   explanation: string;

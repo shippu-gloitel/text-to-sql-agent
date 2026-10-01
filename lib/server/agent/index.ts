@@ -1,11 +1,7 @@
-import { Command, isInterrupted } from '@langchain/langgraph';
-import { introspect, tableRowCounts } from '../db';
-import { UserFacingError } from '../error';
+import { executeReadOnly, introspect, tableRowCounts } from '../db';
+import { redact, UserFacingError } from '../error';
 import { enforceRowLimit, validateSql, type SqlValidation } from '../../security/sql-policy';
-import type { ApprovalRequest, ConnectionProfile, ModelProfile, QueryResult } from '../../types';
-import { getGraph } from './graph';
-import { forgetCheckpoint, sweepExpiredCheckpoints, touchCheckpoint } from './memory';
-import { withRunContext } from './run-context';
+import type { ConnectionProfile, ModelProfile, QueryResult } from '../../types';
 import {
   createDraft,
   createModel,
@@ -20,78 +16,45 @@ import {
   tableName,
   isGreeting,
 } from './utils';
-import type { AgentDecision, AgentEmit, AgentInput } from './state';
+import type { AgentEmit, AgentInput, ResumeInput } from './state';
 
 // How many times the model may correct SQL that failed the safety check.
 const MAX_REPAIR_ATTEMPTS = 2;
 
-/** Every run gets its own checkpoint, so approving an older card can never run newer SQL. */
-function checkpointId(threadId: string, runId: string) {
-  return `${threadId}:${runId}`;
+/** Tables a query may read: the configured allowlist, or every table the schema exposes. */
+async function allowedTables(connection: ConnectionProfile) {
+  if (connection.allowedObjects.length) return connection.allowedObjects;
+  return (await introspect(connection)).tables.map(tableName);
 }
 
-type GraphResult = Awaited<ReturnType<ReturnType<typeof getGraph>['invoke']>>;
-
-async function handleGraphResult(
-  result: GraphResult,
-  queryResult: QueryResult | undefined,
+/**
+ * Sends SQL to the browser for review. The server keeps no state: the approval card holds the SQL
+ * and sends it back with the decision, and it is validated again before anything runs.
+ */
+function requestApproval(
   runId: string,
-  checkpoint: string,
-  emit: AgentEmit,
-) {
-  if (isInterrupted(result)) {
-    const approval = result.__interrupt__?.[0]?.value as Omit<ApprovalRequest, 'runId'>;
-    await touchCheckpoint(checkpoint);
-    emit({
-      type: 'approval.required',
-      runId,
-      sql: approval.sql,
-      explanation: approval.explanation,
-      tables: approval.tables,
-      checks: approval.checks,
-      errors: approval.errors ?? [],
-    });
-    return;
-  }
-  await forgetCheckpoint(checkpoint);
-  emitResult(queryResult, emit);
-}
-
-async function requestApproval(
-  input: AgentInput,
-  runId: string,
-  safeSql: string,
+  sql: string,
   explanation: string,
-  validation: SqlValidation,
-  allowedObjects: string[],
+  validation: Pick<SqlValidation, 'tables' | 'checks' | 'errors'>,
   emit: AgentEmit,
-  signal?: AbortSignal,
 ) {
+  if (!validation.errors.length)
+    emit({
+      type: 'sql.ready',
+      sql,
+      explanation,
+      tables: validation.tables,
+      checks: validation.checks,
+    });
+  emit({ type: 'stage.started', stage: 'Waiting for approval' });
   emit({
-    type: 'sql.ready',
-    sql: safeSql,
+    type: 'approval.required',
+    runId,
+    sql,
     explanation,
     tables: validation.tables,
     checks: validation.checks,
-  });
-  emit({ type: 'stage.started', stage: 'Waiting for approval' });
-
-  const checkpoint = checkpointId(input.threadId, runId);
-  // Only non-secret fields go into the graph state, because it is saved to disk.
-  await withRunContext(checkpoint, input.connection, async context => {
-    const result = await getGraph().invoke(
-      {
-        question: input.question,
-        sql: safeSql,
-        explanation,
-        tables: validation.tables,
-        checks: validation.checks,
-        validationErrors: [],
-        allowedObjects,
-      },
-      { configurable: { thread_id: checkpoint }, signal },
-    );
-    await handleGraphResult(result, context.result, runId, checkpoint, emit);
+    errors: validation.errors,
   });
 }
 
@@ -136,15 +99,12 @@ export async function runAgent(input: AgentInput, emit: AgentEmit, signal?: Abor
     const validation = validateSql(pastedSql, dialect, allowed);
     if (!validation.valid) throw new UserFacingError(validation.errors.join(' '));
     emit({ type: 'stage.completed', stage: 'Checking read-only safety' });
-    await requestApproval(
-      input,
+    requestApproval(
       runId,
       enforceRowLimit(validation.sql, dialect, maxRows),
       'This is the read-only SQL you provided. Review it before execution.',
       validation,
-      allowed,
       emit,
-      signal,
     );
     return;
   }
@@ -171,6 +131,7 @@ export async function runAgent(input: AgentInput, emit: AgentEmit, signal?: Abor
   emit({ type: 'stage.started', stage: 'Drafting SQL' });
   let draft = await createDraft(input.question, input.model, input.connection, availableSchema, {
     signal,
+    history: input.history,
   });
   const isDatabaseQuestion = draft.isDatabaseQuestion || looksLikeDatabaseQuestion(input.question);
 
@@ -191,6 +152,7 @@ export async function runAgent(input: AgentInput, emit: AgentEmit, signal?: Abor
     emit({ type: 'stage.started', stage: 'Correcting SQL' });
     draft = await createDraft(input.question, input.model, input.connection, availableSchema, {
       signal,
+      history: input.history,
       rejected: { sql: draft.sql, errors: validation.errors },
     });
     validation = validateSql(draft.sql, dialect, allowed);
@@ -208,58 +170,68 @@ export async function runAgent(input: AgentInput, emit: AgentEmit, signal?: Abor
 
   emit({ type: 'stage.completed', stage: 'Drafting SQL' });
   emit({ type: 'stage.completed', stage: 'Checking read-only safety' });
-  await requestApproval(
-    input,
+  requestApproval(
     runId,
     enforceRowLimit(validation.sql, dialect, maxRows),
     draft.explanation,
     validation,
-    allowed,
     emit,
-    signal,
   );
 }
 
-export async function resumeAgent(
-  threadId: string,
-  runId: string,
-  decision: AgentDecision,
-  connection: ConnectionProfile,
-  emit: AgentEmit,
-  signal?: AbortSignal,
-) {
-  const checkpoint = checkpointId(threadId, runId);
-  const config = { configurable: { thread_id: checkpoint } };
-  await sweepExpiredCheckpoints();
-  const snapshot = await getGraph().getState(config);
-  if (!snapshot.next.length)
-    throw new UserFacingError(
-      'This approval is no longer active. It may have expired or already been handled. Ask the question again to get a fresh query.',
-    );
-
-  if (decision.decision === 'reject') {
-    await forgetCheckpoint(checkpoint);
+/**
+ * Handles a decision from an approval card. The SQL comes from the browser, so it is always
+ * validated here again; nothing unchecked can reach the database.
+ */
+export async function resumeAgent(input: ResumeInput, emit: AgentEmit) {
+  const { runId, decision, connection } = input;
+  if (decision === 'reject') {
     emit({ type: 'run.completed', answer: 'Query rejected. Nothing was executed.' });
     return;
   }
-  emit({
-    type: 'stage.started',
-    stage: decision.decision === 'edit' ? 'Checking edited SQL' : 'Executing approved query',
-  });
-  try {
-    // The browser sends the connection again; it is used for this request only, never stored.
-    await withRunContext(checkpoint, connection, async context => {
-      const result = await getGraph().invoke(new Command({ resume: decision }), {
-        ...config,
-        signal,
-      });
-      await handleGraphResult(result, context.result, runId, checkpoint, emit);
-    });
-  } catch (error) {
-    // A failed execution ends the approval; the user can ask again with a new query.
-    await forgetCheckpoint(checkpoint);
-    throw error;
+
+  const sql = input.sql?.trim();
+  if (!sql) throw new UserFacingError('There is no SQL to run. Ask the question again.');
+  const { dialect, maxRows } = connection;
+  const validation = validateSql(sql, dialect, await allowedTables(connection));
+
+  if (decision === 'edit') {
+    emit({ type: 'stage.started', stage: 'Checking edited SQL' });
+    requestApproval(
+      runId,
+      validation.valid ? enforceRowLimit(validation.sql, dialect, maxRows) : sql,
+      input.explanation ?? '',
+      validation,
+      emit,
+    );
+    return;
   }
+
+  if (!validation.valid) throw new UserFacingError(validation.errors.join(' '));
+  emit({ type: 'stage.started', stage: 'Executing approved query' });
+  const boundedSql = enforceRowLimit(validation.sql, dialect, maxRows);
+  let result: QueryResult;
+  try {
+    result = await executeReadOnly(connection, boundedSql);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    // The database rejected the SQL (unknown column, type mismatch, timeout, ...). Show the
+    // approval card again with the reason so the SQL can be edited or rejected.
+    const reason = error instanceof Error ? redact(error.message) : 'Unknown database error.';
+    requestApproval(
+      runId,
+      boundedSql,
+      input.explanation ?? '',
+      {
+        tables: validation.tables,
+        checks: validation.checks,
+        errors: [`The database could not run this query: ${reason}`],
+      },
+      emit,
+    );
+    return;
+  }
+  emitResult(result, emit);
 }
 
 function emitResult(result: QueryResult | undefined, emit: AgentEmit, answer?: string) {
