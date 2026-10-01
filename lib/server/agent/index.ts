@@ -2,9 +2,10 @@ import { Command, isInterrupted } from '@langchain/langgraph';
 import { introspect, tableRowCounts } from '../db';
 import { UserFacingError } from '../error';
 import { enforceRowLimit, validateSql, type SqlValidation } from '../../security/sql-policy';
-import type { ApprovalRequest, ModelProfile, QueryResult } from '../../types';
-import { graph } from './graph';
-import { forgetCheckpoint, touchCheckpoint } from './memory';
+import type { ApprovalRequest, ConnectionProfile, ModelProfile, QueryResult } from '../../types';
+import { getGraph } from './graph';
+import { forgetCheckpoint, sweepExpiredCheckpoints, touchCheckpoint } from './memory';
+import { withRunContext } from './run-context';
 import {
   createDraft,
   createModel,
@@ -29,17 +30,18 @@ function checkpointId(threadId: string, runId: string) {
   return `${threadId}:${runId}`;
 }
 
-type GraphResult = Awaited<ReturnType<typeof graph.invoke>>;
+type GraphResult = Awaited<ReturnType<ReturnType<typeof getGraph>['invoke']>>;
 
 async function handleGraphResult(
   result: GraphResult,
+  queryResult: QueryResult | undefined,
   runId: string,
   checkpoint: string,
   emit: AgentEmit,
 ) {
   if (isInterrupted(result)) {
     const approval = result.__interrupt__?.[0]?.value as Omit<ApprovalRequest, 'runId'>;
-    touchCheckpoint(checkpoint);
+    await touchCheckpoint(checkpoint);
     emit({
       type: 'approval.required',
       runId,
@@ -52,7 +54,7 @@ async function handleGraphResult(
     return;
   }
   await forgetCheckpoint(checkpoint);
-  emitResult((result as { result?: QueryResult }).result, emit);
+  emitResult(queryResult, emit);
 }
 
 async function requestApproval(
@@ -75,19 +77,22 @@ async function requestApproval(
   emit({ type: 'stage.started', stage: 'Waiting for approval' });
 
   const checkpoint = checkpointId(input.threadId, runId);
-  const result = await graph.invoke(
-    {
-      ...input,
-      sql: safeSql,
-      explanation,
-      tables: validation.tables,
-      checks: validation.checks,
-      validationErrors: [],
-      allowedObjects,
-    },
-    { configurable: { thread_id: checkpoint }, signal },
-  );
-  await handleGraphResult(result, runId, checkpoint, emit);
+  // Only non-secret fields go into the graph state, because it is saved to disk.
+  await withRunContext(checkpoint, input.connection, async context => {
+    const result = await getGraph().invoke(
+      {
+        question: input.question,
+        sql: safeSql,
+        explanation,
+        tables: validation.tables,
+        checks: validation.checks,
+        validationErrors: [],
+        allowedObjects,
+      },
+      { configurable: { thread_id: checkpoint }, signal },
+    );
+    await handleGraphResult(result, context.result, runId, checkpoint, emit);
+  });
 }
 
 export async function testModel(profile: ModelProfile) {
@@ -219,15 +224,17 @@ export async function resumeAgent(
   threadId: string,
   runId: string,
   decision: AgentDecision,
+  connection: ConnectionProfile,
   emit: AgentEmit,
   signal?: AbortSignal,
 ) {
   const checkpoint = checkpointId(threadId, runId);
   const config = { configurable: { thread_id: checkpoint } };
-  const snapshot = await graph.getState(config);
+  await sweepExpiredCheckpoints();
+  const snapshot = await getGraph().getState(config);
   if (!snapshot.next.length)
     throw new UserFacingError(
-      'This approval is no longer active. It may have expired or the server restarted. Ask the question again to get a fresh query.',
+      'This approval is no longer active. It may have expired or already been handled. Ask the question again to get a fresh query.',
     );
 
   if (decision.decision === 'reject') {
@@ -240,8 +247,14 @@ export async function resumeAgent(
     stage: decision.decision === 'edit' ? 'Checking edited SQL' : 'Executing approved query',
   });
   try {
-    const result = await graph.invoke(new Command({ resume: decision }), { ...config, signal });
-    await handleGraphResult(result, runId, checkpoint, emit);
+    // The browser sends the connection again; it is used for this request only, never stored.
+    await withRunContext(checkpoint, connection, async context => {
+      const result = await getGraph().invoke(new Command({ resume: decision }), {
+        ...config,
+        signal,
+      });
+      await handleGraphResult(result, context.result, runId, checkpoint, emit);
+    });
   } catch (error) {
     // A failed execution ends the approval; the user can ask again with a new query.
     await forgetCheckpoint(checkpoint);

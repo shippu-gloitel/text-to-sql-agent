@@ -39,8 +39,10 @@ approval.
   administration or file functions (`pg_*`, `set_config`, `sleep`, `load_file`, `load_extension`,
   …) are rejected after parsing the query.
 - The outermost query always gets a `LIMIT` no larger than the configured maximum rows.
-- Each run has its own approval checkpoint. Approvals are single-use and expire after 30 minutes
-  or when the server restarts.
+- Each run has its own approval checkpoint. Approvals are single-use and expire after 30 minutes.
+- Pending approvals are saved in a local SQLite file (`.data/approvals.sqlite`, git-ignored) so
+  they survive restarts. Only the question, SQL and table names are stored: credentials and query
+  results never are, because the browser sends the connection again when you approve.
 - Chat history, including result rows, is stored encrypted in `localStorage`. Credentials are
   stored in a passphrase vault (PBKDF2-SHA256, 600k iterations, AES-GCM).
 
@@ -84,7 +86,7 @@ proxy.ts            Optional Basic auth
 
 ## Known limitations
 
-- Approval checkpoints are held in memory, so pending approvals do not survive a restart and the
-  app should run as a single instance.
+- The approval store is a local SQLite file, so every server process must run on the same machine
+  and share the project directory.
 - PostgreSQL SSL connections do not verify the server certificate.
 - Only OpenAI-compatible model providers are supported.
