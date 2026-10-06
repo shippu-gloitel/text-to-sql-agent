@@ -4,7 +4,6 @@ import { enforceRowLimit, validateSql, type SqlValidation } from '../../security
 import type { ConnectionProfile, ModelProfile, QueryResult } from '../../types';
 import {
   createDraft,
-  createModel,
   extractPastedSql,
   isRowCountQuestion,
   isTableListQuestion,
@@ -15,11 +14,10 @@ import {
   tableHint,
   tableName,
   isGreeting,
+  testModelCapabilities,
 } from './utils';
 import type { AgentEmit, AgentInput, ResumeInput } from './state';
-
-// How many times the model may correct SQL that failed the safety check.
-const MAX_REPAIR_ATTEMPTS = 2;
+import { createDraftGraph } from './workflow';
 
 /** Tables a query may read: the configured allowlist, or every table the schema exposes. */
 async function allowedTables(connection: ConnectionProfile) {
@@ -60,7 +58,7 @@ function requestApproval(
 
 export async function testModel(profile: ModelProfile) {
   const started = performance.now();
-  await createModel(profile).invoke('Reply with the single word READY.');
+  await testModelCapabilities(profile);
   return {
     ok: true,
     latencyMs: Math.round(performance.now() - started),
@@ -129,33 +127,37 @@ export async function runAgent(input: AgentInput, emit: AgentEmit, signal?: Abor
   }
 
   emit({ type: 'stage.started', stage: 'Drafting SQL' });
-  let draft = await createDraft(input.question, input.model, input.connection, availableSchema, {
-    signal,
-    history: input.history,
+  const graph = createDraftGraph({
+    question: input.question,
+    dialect,
+    allowed,
+    generate: rejected =>
+      createDraft(input.question, input.model, input.connection, availableSchema, {
+        signal,
+        history: input.history,
+        rejected,
+      }),
+    onRepair: () => emit({ type: 'stage.started', stage: 'Correcting SQL' }),
   });
-  const isDatabaseQuestion = draft.isDatabaseQuestion || looksLikeDatabaseQuestion(input.question);
-
-  if (!isDatabaseQuestion) {
+  const { draft, validation } = await graph.invoke(
+    {
+      draft: {
+        isDatabaseQuestion: true,
+        sql: '',
+        explanation: '',
+        assumptions: [],
+      },
+      validation: { valid: false, sql: '', tables: [], checks: [], errors: [] },
+      repairs: 0,
+    },
+    { signal },
+  );
+  if (!draft.isDatabaseQuestion && !looksLikeDatabaseQuestion(input.question)) {
     emit({
       type: 'run.completed',
       answer: `I can help you explore this connected database with read-only queries.\n\nTry asking:\n• How many rows are in each table?\n• Show the five newest users.\n• Which columns does the users table have?\n\n${tableHint(availableSchema)}`,
     });
     return;
-  }
-
-  let validation = validateSql(draft.sql, dialect, allowed);
-  for (let attempt = 1; draft.sql.trim() && !validation.valid; attempt += 1) {
-    if (attempt > MAX_REPAIR_ATTEMPTS)
-      throw new UserFacingError(
-        `The generated SQL did not pass the read-only safety check: ${validation.errors.join(' ')}`,
-      );
-    emit({ type: 'stage.started', stage: 'Correcting SQL' });
-    draft = await createDraft(input.question, input.model, input.connection, availableSchema, {
-      signal,
-      history: input.history,
-      rejected: { sql: draft.sql, errors: validation.errors },
-    });
-    validation = validateSql(draft.sql, dialect, allowed);
   }
 
   if (!draft.sql.trim()) {
@@ -167,6 +169,11 @@ export async function runAgent(input: AgentInput, emit: AgentEmit, signal?: Abor
     });
     return;
   }
+
+  if (!validation.valid)
+    throw new UserFacingError(
+      `The generated SQL did not pass the read-only safety check: ${validation.errors.join(' ')}`,
+    );
 
   emit({ type: 'stage.completed', stage: 'Drafting SQL' });
   emit({ type: 'stage.completed', stage: 'Checking read-only safety' });
@@ -183,7 +190,7 @@ export async function runAgent(input: AgentInput, emit: AgentEmit, signal?: Abor
  * Handles a decision from an approval card. The SQL comes from the browser, so it is always
  * validated here again; nothing unchecked can reach the database.
  */
-export async function resumeAgent(input: ResumeInput, emit: AgentEmit) {
+export async function resumeAgent(input: ResumeInput, emit: AgentEmit, signal?: AbortSignal) {
   const { runId, decision, connection } = input;
   if (decision === 'reject') {
     emit({ type: 'run.completed', answer: 'Query rejected. Nothing was executed.' });
@@ -212,7 +219,7 @@ export async function resumeAgent(input: ResumeInput, emit: AgentEmit) {
   const boundedSql = enforceRowLimit(validation.sql, dialect, maxRows);
   let result: QueryResult;
   try {
-    result = await executeReadOnly(connection, boundedSql);
+    result = await executeReadOnly(connection, boundedSql, signal);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
     // The database rejected the SQL (unknown column, type mismatch, timeout, ...). Show the

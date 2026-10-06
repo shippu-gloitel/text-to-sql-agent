@@ -4,8 +4,15 @@ import { runRequestSchema } from '@/lib/types';
 
 export async function POST(request: Request) {
   const parsed = runRequestSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success)
-    return Response.json({ message: 'The request was invalid.' }, { status: 400 });
+  if (!parsed.success) {
+    const details = parsed.error.issues
+      .map(issue => {
+        const path = issue.path.join('.');
+        return path ? `${path}: ${issue.message}` : issue.message;
+      })
+      .join(' ');
+    return Response.json({ message: `The request was invalid. ${details}` }, { status: 400 });
+  }
 
   return ndjsonResponse(request, (emit, signal) => runAgent(parsed.data, emit, signal));
 }

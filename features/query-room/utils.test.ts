@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { generateDataKey } from '@/lib/security/vault';
 import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from '@/lib/storage';
 import type { ChatThread } from './types';
-import { loadThreads, saveThreads } from './utils';
+import { escapeCsvCell, loadThreads, saveThreads } from './utils';
 
 // Minimal localStorage with a size quota, like a browser's.
 class QuotaStorage {
@@ -94,5 +94,29 @@ describe('encrypted chat history', () => {
     expect(result?.rows.length).toBeLessThan(5000);
     expect(result?.truncated).toBe(true);
     expect(result?.rowCount).toBe(5000);
+  });
+
+  test('does not write an encrypted snapshot after it becomes stale', async () => {
+    const key = generateDataKey();
+    let current = true;
+    const saving = saveThreads([thread()], key, () => current);
+    current = false;
+
+    expect(await saving).toBe(false);
+    expect(storage.getItem(STORAGE_KEYS.threads)).toBeNull();
+  });
+});
+
+describe('CSV export safety', () => {
+  test.each(['=2+2', '+cmd', '-cmd', '@SUM(A1:A2)', '  =2+2', '\t=2+2'])(
+    'neutralizes spreadsheet formulas in %s',
+    value => {
+      expect(escapeCsvCell(value)).toBe(`"'${value}"`);
+    },
+  );
+
+  test('does not change numeric values or ordinary text', () => {
+    expect(escapeCsvCell(-2)).toBe('"-2"');
+    expect(escapeCsvCell('hello "world"')).toBe('"hello ""world"""');
   });
 });

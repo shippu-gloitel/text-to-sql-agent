@@ -51,6 +51,26 @@ export function threadTitle(messages: ChatMessage[]) {
   return compact.length > 58 ? `${compact.slice(0, 58)}…` : compact;
 }
 
+export function upsertActiveThread(
+  threads: ChatThread[],
+  threadId: string,
+  messages: ChatMessage[],
+  updatedAt = Date.now(),
+) {
+  if (!threadId || !messages.some(message => message.role === 'user')) return threads;
+  const existing = threads.find(thread => thread.id === threadId);
+  if (existing?.messages === messages) return threads;
+  const updated: ChatThread = {
+    id: threadId,
+    title:
+      existing && existing.title !== 'New conversation' ? existing.title : threadTitle(messages),
+    messages: messages.slice(-30),
+    createdAt: existing?.createdAt ?? updatedAt,
+    updatedAt,
+  };
+  return [updated, ...threads.filter(thread => thread.id !== threadId)];
+}
+
 function isChatThread(value: unknown): value is ChatThread {
   if (!value || typeof value !== 'object') return false;
   const thread = value as Partial<ChatThread>;
@@ -158,10 +178,16 @@ function compactThreads(threads: ChatThread[], rowsPerResult: number): ChatThrea
 }
 
 /** Encrypts and saves chat history, dropping result rows if browser storage is full. */
-export async function saveThreads(threads: ChatThread[], threadsKey: string) {
+export async function saveThreads(
+  threads: ChatThread[],
+  threadsKey: string,
+  isCurrent: () => boolean = () => true,
+) {
   for (const rowsPerResult of [PERSISTED_ROWS_PER_RESULT, 20, 0]) {
     try {
+      if (!isCurrent()) return false;
       const envelope = await encryptWithDataKey(compactThreads(threads, rowsPerResult), threadsKey);
+      if (!isCurrent()) return false;
       writeStorage(STORAGE_KEYS.threads, envelope);
       return true;
     } catch {
@@ -272,6 +298,12 @@ export function formatCell(value: unknown) {
   return String(value);
 }
 
+export function escapeCsvCell(value: unknown) {
+  const text = formatCell(value);
+  const safe = typeof value === 'string' && /^[\t\r ]*[=+\-@]/.test(value) ? `'${text}` : text;
+  return `"${safe.replaceAll('"', '""')}"`;
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -282,10 +314,9 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export function exportCsv(result: QueryResult) {
-  const escape = (value: unknown) => `"${formatCell(value).replaceAll('"', '""')}"`;
-  const header = result.columns.map(column => escape(column.name)).join(',');
+  const header = result.columns.map(column => escapeCsvCell(column.name)).join(',');
   const rows = result.rows.map(row =>
-    result.columns.map(column => escape(row[column.name])).join(','),
+    result.columns.map(column => escapeCsvCell(row[column.name])).join(','),
   );
   downloadBlob(
     new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8' }),

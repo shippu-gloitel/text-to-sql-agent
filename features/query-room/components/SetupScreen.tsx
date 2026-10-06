@@ -39,6 +39,11 @@ export default function SetupScreen(props: {
   setShowApiKey: (value: boolean) => void;
   passphrase: string;
   setPassphrase: (value: string) => void;
+  dbFieldErrors: Record<string, string>;
+  setDbFieldErrors: Dispatch<SetStateAction<Record<string, string>>>;
+  modelFieldErrors: Record<string, string>;
+  setModelFieldErrors: Dispatch<SetStateAction<Record<string, string>>>;
+  passphraseError: string;
   dbCheck: CheckResult;
   modelCheck: CheckResult;
   setDbCheck: Dispatch<SetStateAction<CheckResult>>;
@@ -54,14 +59,26 @@ export default function SetupScreen(props: {
   const setDatabaseValue = (key: keyof SetupForm, value: string | boolean) => {
     setSetup(current => ({ ...current, [key]: value }));
     props.setDbCheck({ state: 'idle' });
+    props.setDbFieldErrors(current => {
+      if (key === 'dialect') return {};
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
   };
   const setModelField = (key: keyof ModelForm, value: string) => {
     setModel(current => ({ ...current, [key]: value }));
     props.setModelCheck({ state: 'idle' });
+    props.setModelFieldErrors(current => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
   };
   const dbReady = props.dbCheck.state === 'success';
   const modelReady = props.modelCheck.state === 'success';
-  const canSave = dbReady && modelReady && props.passphrase.length > 0;
+  const canSave = dbReady && modelReady;
+  const saveStatus = workspaceSaveStatus(canSave, props.passphrase);
 
   return (
     <main className='setup'>
@@ -108,17 +125,32 @@ export default function SetupScreen(props: {
             </div>
             <div className='panel-body'>
               <div className='field-grid'>
-                <Field label='Name' hint='Shown in the sidebar'>
+                <Field
+                  label='Name'
+                  hint='Shown in the sidebar'
+                  required
+                  error={props.dbFieldErrors.name}
+                >
                   <input
                     className='input'
                     value={setup.name}
                     onChange={event => setDatabaseValue('name', event.target.value)}
                     placeholder='Production analytics'
+                    required
+                    aria-invalid={!!props.dbFieldErrors.name}
+                    aria-describedby={props.dbFieldErrors.name ? 'name-error' : undefined}
                   />
                 </Field>
                 <div className='field'>
-                  <span className='field-label'>Type</span>
-                  <div className='segmented' role='radiogroup' aria-label='Database type'>
+                  <span className='field-label'>
+                    Type <RequiredMark />
+                  </span>
+                  <div
+                    className='segmented'
+                    role='radiogroup'
+                    aria-label='Database type'
+                    aria-required='true'
+                  >
                     {dialects.map(dialect => (
                       <button
                         key={dialect.value}
@@ -151,44 +183,61 @@ export default function SetupScreen(props: {
               </div>
 
               {setup.dialect === 'sqlite' ? (
-                <Field label='File path' hint='Must be readable by the server'>
+                <Field
+                  label='File path'
+                  hint='Must be readable by the server'
+                  required
+                  error={props.dbFieldErrors.path}
+                >
                   <input
                     className='input'
                     value={setup.path}
                     onChange={event => setDatabaseValue('path', event.target.value)}
                     placeholder='/var/data/analytics.sqlite'
                     spellCheck={false}
+                    required
+                    aria-invalid={!!props.dbFieldErrors.path}
+                    aria-describedby={props.dbFieldErrors.path ? 'file-path-error' : undefined}
                   />
                 </Field>
               ) : (
                 <div className='field-grid'>
-                  <Field label='Host'>
+                  <Field label='Host' required error={props.dbFieldErrors.host}>
                     <input
                       className='input'
                       value={setup.host}
                       onChange={event => setDatabaseValue('host', event.target.value)}
                       placeholder='localhost'
                       spellCheck={false}
+                      required
+                      aria-invalid={!!props.dbFieldErrors.host}
+                      aria-describedby={props.dbFieldErrors.host ? 'host-error' : undefined}
                     />
                   </Field>
-                  <Field label='Port'>
+                  <Field label='Port' required error={props.dbFieldErrors.port}>
                     <input
                       className='input'
                       value={setup.port}
                       onChange={event => setDatabaseValue('port', event.target.value)}
                       inputMode='numeric'
+                      required
+                      aria-invalid={!!props.dbFieldErrors.port}
+                      aria-describedby={props.dbFieldErrors.port ? 'port-error' : undefined}
                     />
                   </Field>
-                  <Field label='Database'>
+                  <Field label='Database' required error={props.dbFieldErrors.database}>
                     <input
                       className='input'
                       value={setup.database}
                       onChange={event => setDatabaseValue('database', event.target.value)}
                       placeholder='analytics'
                       spellCheck={false}
+                      required
+                      aria-invalid={!!props.dbFieldErrors.database}
+                      aria-describedby={props.dbFieldErrors.database ? 'database-error' : undefined}
                     />
                   </Field>
-                  <Field label='Username'>
+                  <Field label='Username' required error={props.dbFieldErrors.username}>
                     <input
                       className='input'
                       value={setup.username}
@@ -196,9 +245,12 @@ export default function SetupScreen(props: {
                       placeholder='readonly_user'
                       spellCheck={false}
                       autoComplete='off'
+                      required
+                      aria-invalid={!!props.dbFieldErrors.username}
+                      aria-describedby={props.dbFieldErrors.username ? 'username-error' : undefined}
                     />
                   </Field>
-                  <Field label='Password'>
+                  <Field label='Password' required error={props.dbFieldErrors.password}>
                     <SecretInput
                       value={setup.password}
                       onChange={value => setDatabaseValue('password', value)}
@@ -206,6 +258,9 @@ export default function SetupScreen(props: {
                       setVisible={props.setShowPassword}
                       placeholder='Database password'
                       name='password'
+                      required
+                      invalid={!!props.dbFieldErrors.password}
+                      describedBy={props.dbFieldErrors.password ? 'password-error' : undefined}
                     />
                   </Field>
                   <label className='switch switch-cell'>
@@ -229,6 +284,7 @@ export default function SetupScreen(props: {
                 <Field
                   label='Allowed tables'
                   hint='Comma-separated. Leave empty to allow every table the user can read.'
+                  error={props.dbFieldErrors.allowedObjects}
                 >
                   <input
                     className='input'
@@ -236,31 +292,52 @@ export default function SetupScreen(props: {
                     onChange={event => setDatabaseValue('allowedObjects', event.target.value)}
                     placeholder='public.customers, public.orders'
                     spellCheck={false}
+                    aria-invalid={!!props.dbFieldErrors.allowedObjects}
+                    aria-describedby={
+                      props.dbFieldErrors.allowedObjects ? 'allowed-tables-error' : undefined
+                    }
                   />
                 </Field>
                 <div className='field-grid'>
-                  <Field label='Query timeout (ms)'>
+                  <Field label='Query timeout (ms)' error={props.dbFieldErrors.timeoutMs}>
                     <input
                       className='input'
                       value={setup.timeoutMs}
                       onChange={event => setDatabaseValue('timeoutMs', event.target.value)}
                       inputMode='numeric'
+                      aria-invalid={!!props.dbFieldErrors.timeoutMs}
+                      aria-describedby={
+                        props.dbFieldErrors.timeoutMs ? 'query-timeout-ms-error' : undefined
+                      }
                     />
                   </Field>
-                  <Field label='Maximum rows'>
+                  <Field label='Maximum rows' error={props.dbFieldErrors.maxRows}>
                     <input
                       className='input'
                       value={setup.maxRows}
                       onChange={event => setDatabaseValue('maxRows', event.target.value)}
                       inputMode='numeric'
+                      aria-invalid={!!props.dbFieldErrors.maxRows}
+                      aria-describedby={
+                        props.dbFieldErrors.maxRows ? 'maximum-rows-error' : undefined
+                      }
                     />
                   </Field>
-                  <Field label='Maximum response size (bytes)'>
+                  <Field
+                    label='Maximum response size (bytes)'
+                    error={props.dbFieldErrors.maxResponseBytes}
+                  >
                     <input
                       className='input'
                       value={setup.maxResponseBytes}
                       onChange={event => setDatabaseValue('maxResponseBytes', event.target.value)}
                       inputMode='numeric'
+                      aria-invalid={!!props.dbFieldErrors.maxResponseBytes}
+                      aria-describedby={
+                        props.dbFieldErrors.maxResponseBytes
+                          ? 'maximum-response-size-bytes-error'
+                          : undefined
+                      }
                     />
                   </Field>
                 </div>
@@ -300,7 +377,7 @@ export default function SetupScreen(props: {
             </div>
             <div className='panel-body'>
               <div className='field-grid'>
-                <Field label='Model'>
+                <Field label='Model' required error={props.modelFieldErrors.model}>
                   <input
                     className='input'
                     name='model'
@@ -308,9 +385,12 @@ export default function SetupScreen(props: {
                     onChange={event => setModelField('model', event.target.value)}
                     placeholder='gpt-4o-mini'
                     spellCheck={false}
+                    required
+                    aria-invalid={!!props.modelFieldErrors.model}
+                    aria-describedby={props.modelFieldErrors.model ? 'model-error' : undefined}
                   />
                 </Field>
-                <Field label='API key'>
+                <Field label='API key' required error={props.modelFieldErrors.apiKey}>
                   <SecretInput
                     value={model.apiKey}
                     onChange={value => setModelField('apiKey', value)}
@@ -318,6 +398,9 @@ export default function SetupScreen(props: {
                     setVisible={props.setShowApiKey}
                     placeholder='sk-…'
                     name='apiKey'
+                    required
+                    invalid={!!props.modelFieldErrors.apiKey}
+                    describedBy={props.modelFieldErrors.apiKey ? 'api-key-error' : undefined}
                   />
                 </Field>
               </div>
@@ -327,21 +410,33 @@ export default function SetupScreen(props: {
                 label='Endpoint and temperature'
               >
                 <div className='field-grid'>
-                  <Field label='Base URL' hint='Leave empty for api.openai.com'>
+                  <Field
+                    label='Base URL'
+                    hint='Leave empty for api.openai.com'
+                    error={props.modelFieldErrors.baseUrl}
+                  >
                     <input
                       className='input'
                       value={model.baseUrl}
                       onChange={event => setModelField('baseUrl', event.target.value)}
                       placeholder='https://api.openai.com/v1'
                       spellCheck={false}
+                      aria-invalid={!!props.modelFieldErrors.baseUrl}
+                      aria-describedby={
+                        props.modelFieldErrors.baseUrl ? 'base-url-error' : undefined
+                      }
                     />
                   </Field>
-                  <Field label='Temperature'>
+                  <Field label='Temperature' error={props.modelFieldErrors.temperature}>
                     <input
                       className='input'
                       value={model.temperature}
                       onChange={event => setModelField('temperature', event.target.value)}
                       inputMode='decimal'
+                      aria-invalid={!!props.modelFieldErrors.temperature}
+                      aria-describedby={
+                        props.modelFieldErrors.temperature ? 'temperature-error' : undefined
+                      }
                     />
                   </Field>
                 </div>
@@ -383,7 +478,7 @@ export default function SetupScreen(props: {
               </p>
             </div>
             <div className='panel-body'>
-              <Field label='Passphrase'>
+              <Field label='Passphrase' required error={props.passphraseError}>
                 <input
                   className='input'
                   type='password'
@@ -392,13 +487,14 @@ export default function SetupScreen(props: {
                   onKeyDown={event => event.key === 'Enter' && canSave && props.saveWorkspace()}
                   placeholder='Create a strong passphrase'
                   autoComplete='new-password'
+                  required
+                  aria-invalid={!!props.passphraseError}
+                  aria-describedby={props.passphraseError ? 'passphrase-error' : undefined}
                 />
               </Field>
             </div>
             <div className='panel-footer'>
-              <span className='status'>
-                {canSave ? 'Ready to save.' : 'Test the database and model to continue.'}
-              </span>
+              <span className='status'>{saveStatus}</span>
               <div className='panel-actions'>
                 <button
                   className='btn btn-primary'
@@ -415,6 +511,12 @@ export default function SetupScreen(props: {
       </div>
     </main>
   );
+}
+
+function workspaceSaveStatus(canSave: boolean, passphrase: string) {
+  if (!canSave) return 'Test the database and model to continue.';
+  if (!passphrase) return 'Enter a passphrase to encrypt this workspace.';
+  return 'Ready to save.';
 }
 
 function Step({
@@ -456,19 +558,40 @@ function Field({
   label,
   hint,
   className = '',
+  required = false,
+  error,
   children,
 }: {
   label: string;
   hint?: string;
   className?: string;
+  required?: boolean;
+  error?: string;
   children: ReactNode;
 }) {
+  const errorId = `${label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}-error`;
   return (
     <label className={`field ${className}`}>
-      <span className='field-label'>{label}</span>
+      <span className='field-label'>
+        {label} {required && <RequiredMark />}
+      </span>
       {children}
-      {hint && <span className='field-hint'>{hint}</span>}
+      {error ? (
+        <span id={errorId} className='field-error' role='alert'>
+          {error}
+        </span>
+      ) : (
+        hint && <span className='field-hint'>{hint}</span>
+      )}
     </label>
+  );
+}
+
+function RequiredMark() {
+  return (
+    <span className='required-mark' aria-hidden='true'>
+      *
+    </span>
   );
 }
 
@@ -479,6 +602,9 @@ function SecretInput({
   setVisible,
   placeholder,
   name,
+  required = false,
+  invalid = false,
+  describedBy,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -486,6 +612,9 @@ function SecretInput({
   setVisible: (value: boolean) => void;
   placeholder: string;
   name: string;
+  required?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
 }) {
   return (
     <span className='input-group'>
@@ -497,6 +626,9 @@ function SecretInput({
         placeholder={placeholder}
         autoComplete='off'
         spellCheck={false}
+        required={required}
+        aria-invalid={invalid}
+        aria-describedby={describedBy}
       />
       <button
         type='button'

@@ -10,6 +10,7 @@ import {
 } from '../../types';
 import { matchesAllowedObject } from '../../security/sql-policy';
 import type { TableRowCount } from '../db';
+import { UserFacingError } from '../error';
 import { boundRows } from '../result';
 import { buildRepairPrompt, buildSystemPrompt } from './prompts';
 import type { Draft } from './state';
@@ -56,6 +57,15 @@ export function tableHint(schema: SchemaSnapshot) {
 
 export function createModel(profile: ModelProfile) {
   const parsed = modelProfileSchema.parse(profile);
+  if (parsed.baseUrl) {
+    const allowedHosts = (process.env.ALLOWED_MODEL_HOSTS ?? '')
+      .split(',')
+      .map(host => host.trim().toLowerCase())
+      .filter(Boolean);
+    const hostname = new URL(parsed.baseUrl).hostname.toLowerCase();
+    if (allowedHosts.length && !allowedHosts.includes(hostname))
+      throw new UserFacingError('This model host is not allowed by the server.');
+  }
   return new ChatOpenAI({
     apiKey: parsed.apiKey,
     model: parsed.model,
@@ -64,6 +74,22 @@ export function createModel(profile: ModelProfile) {
     maxRetries: 1,
     configuration: parsed.baseUrl ? { baseURL: parsed.baseUrl } : undefined,
   });
+}
+
+function createDraftModel(profile: ModelProfile) {
+  return createModel(profile).withStructuredOutput(DraftJsonSchema, {
+    method: 'functionCalling',
+    name: 'text_to_sql_draft',
+  });
+}
+
+/** Verifies the structured tool-calling capability used by real SQL-planning requests. */
+export async function testModelCapabilities(profile: ModelProfile) {
+  const response = await createDraftModel(profile).invoke([
+    ['system', 'This is a capability check. Return the requested structured response with no SQL.'],
+    ['user', 'Mark this as unrelated to a database and briefly confirm the capability check.'],
+  ]);
+  DraftSchema.parse(response);
 }
 
 export function tableName(table: SchemaSnapshot['tables'][number]) {
@@ -333,11 +359,7 @@ export async function createDraft(
   schema: SchemaSnapshot,
   { signal, rejected, history }: DraftOptions = {},
 ): Promise<Draft> {
-  const model = createModel(modelProfile).withStructuredOutput(DraftJsonSchema, {
-    method: 'functionCalling',
-    name: 'text_to_sql_draft',
-    strict: true,
-  });
+  const model = createDraftModel(modelProfile);
 
   const schemaText = schema.tables
     .map(

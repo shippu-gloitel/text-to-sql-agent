@@ -18,8 +18,9 @@ describe('read-only SQL policy', () => {
     expect(result.tables).toEqual(['public.users', 'public.orders']);
   });
 
-  test('matches an unqualified table to a qualified allowlist entry', () => {
-    expect(validateSql('SELECT id FROM users', 'postgresql', ['public.users']).valid).toBe(true);
+  test('requires qualified SQL for a qualified allowlist entry', () => {
+    expect(validateSql('SELECT id FROM users', 'postgresql', ['public.users']).valid).toBe(false);
+    expect(validateSql('SELECT id FROM users', 'mysql', ['analytics.users']).valid).toBe(true);
   });
 
   test('does not treat a CTE name as a database table', () => {
@@ -84,8 +85,9 @@ describe('read-only SQL policy', () => {
 
   test('ignores blocked words inside string literals and quoted identifiers', () => {
     expect(
-      validateSql("SELECT id FROM users WHERE status = 'DELETE'", 'postgresql', ['public.users'])
-        .valid,
+      validateSql("SELECT id FROM public.users WHERE status = 'DELETE'", 'postgresql', [
+        'public.users',
+      ]).valid,
     ).toBe(true);
     expect(validateSql("SELECT id FROM users WHERE note = 'a--b; c'", 'postgresql').valid).toBe(
       true,

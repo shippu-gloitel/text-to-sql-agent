@@ -3,6 +3,7 @@
 import { AnimatePresence } from 'motion/react';
 import dynamic from 'next/dynamic';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { ZodError, z } from 'zod';
 import {
   decryptSessionVault,
   decryptVault,
@@ -32,7 +33,7 @@ import {
   loadThreads,
   makeModel,
   saveThreads,
-  threadTitle,
+  upsertActiveThread,
   updateMessage,
 } from './utils';
 import { DeleteThreadModal, DeleteWorkspaceModal } from './components/WorkspaceModals';
@@ -55,11 +56,14 @@ export default function QueryRoom() {
   const [dbCheck, setDbCheck] = useState<{ state: CheckState; message?: string; details?: string }>(
     { state: 'idle' },
   );
+  const [dbFieldErrors, setDbFieldErrors] = useState<Record<string, string>>({});
   const [modelCheck, setModelCheck] = useState<{
     state: CheckState;
     message?: string;
     details?: string;
   }>({ state: 'idle' });
+  const [modelFieldErrors, setModelFieldErrors] = useState<Record<string, string>>({});
+  const [passphraseError, setPassphraseError] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [question, setQuestion] = useState('');
@@ -70,6 +74,8 @@ export default function QueryRoom() {
   const [threadDeleteTarget, setThreadDeleteTarget] = useState<ChatThread | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const historySaveSequenceRef = useRef(0);
+  const workspaceEpochRef = useRef(0);
 
   const applyProfiles = async (value: StoredProfiles & { threadsKey: string }) => {
     const savedThreads = await loadThreads(value.threadsKey);
@@ -119,29 +125,27 @@ export default function QueryRoom() {
   useEffect(() => {
     const threadsKey = profiles?.threadsKey;
     if (!threadsKey) return;
+    const sequence = ++historySaveSequenceRef.current;
+    const epoch = workspaceEpochRef.current;
     // Debounced so a streaming answer does not re-encrypt history on every event.
-    const timer = window.setTimeout(() => void saveThreads(threads, threadsKey), 400);
-    return () => window.clearTimeout(timer);
+    const timer = window.setTimeout(
+      () =>
+        void saveThreads(
+          threads,
+          threadsKey,
+          () => historySaveSequenceRef.current === sequence && workspaceEpochRef.current === epoch,
+        ),
+      400,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      if (historySaveSequenceRef.current === sequence) historySaveSequenceRef.current += 1;
+    };
   }, [profiles, threads]);
 
   useEffect(() => {
     if (!profiles || !threadId || !messages.some(message => message.role === 'user')) return;
-    setThreads(current => {
-      const existing = current.find(thread => thread.id === threadId);
-      // Selecting a thread restores its saved messages; that is not a new update.
-      if (existing?.messages === messages) return current;
-      const updated: ChatThread = {
-        id: threadId,
-        title:
-          existing && existing.title !== 'New conversation'
-            ? existing.title
-            : threadTitle(messages),
-        messages: messages.slice(-30),
-        createdAt: existing?.createdAt ?? Date.now(),
-        updatedAt: Date.now(),
-      };
-      return [updated, ...current.filter(thread => thread.id !== threadId)];
-    });
+    setThreads(current => upsertActiveThread(current, threadId, messages));
   }, [messages, profiles, threadId]);
 
   const unlock = async () => {
@@ -168,6 +172,7 @@ export default function QueryRoom() {
       'Database connection failed. Check the host, port, database, and credentials.';
     try {
       setDbCheck({ state: 'testing' });
+      setDbFieldErrors({});
       const connection = makeConnection(setup);
       const response = await fetch('/api/health/database', {
         method: 'POST',
@@ -189,6 +194,18 @@ export default function QueryRoom() {
         details: `${data.version} · ${data.latencyMs}ms`,
       });
     } catch (error) {
+      if (error instanceof ZodError) {
+        const errors = Object.fromEntries(
+          error.issues.map(issue => [String(issue.path[0]), issue.message]),
+        );
+        setDbFieldErrors(errors);
+        if (
+          ['allowedObjects', 'timeoutMs', 'maxRows', 'maxResponseBytes'].some(key => key in errors)
+        )
+          setDbAdvanced(true);
+        setDbCheck({ state: 'error', message: 'Fix the highlighted fields and try again.' });
+        return;
+      }
       setDbCheck({
         state: 'error',
         message: friendlyTestError(error, fallbackMessage),
@@ -200,6 +217,7 @@ export default function QueryRoom() {
     const fallbackMessage = 'Model connection failed. Check the provider, model, and API key.';
     try {
       setModelCheck({ state: 'testing' });
+      setModelFieldErrors({});
       const model = makeModel(modelForm);
       const response = await fetch('/api/health/model', {
         method: 'POST',
@@ -222,6 +240,15 @@ export default function QueryRoom() {
         details: `${data.provider} · ${data.model} · ${data.latencyMs}ms`,
       });
     } catch (error) {
+      if (error instanceof ZodError) {
+        const errors = Object.fromEntries(
+          error.issues.map(issue => [String(issue.path[0]), issue.message]),
+        );
+        setModelFieldErrors(errors);
+        if ('baseUrl' in errors || 'temperature' in errors) setModelAdvanced(true);
+        setModelCheck({ state: 'error', message: 'Fix the highlighted fields and try again.' });
+        return;
+      }
       setModelCheck({
         state: 'error',
         message: friendlyTestError(error, fallbackMessage),
@@ -234,6 +261,7 @@ export default function QueryRoom() {
     setDbAdvanced(false);
     setShowPassword(false);
     setDbCheck({ state: 'idle' });
+    setDbFieldErrors({});
   };
 
   const resetModelForm = () => {
@@ -241,10 +269,17 @@ export default function QueryRoom() {
     setModelAdvanced(false);
     setShowApiKey(false);
     setModelCheck({ state: 'idle' });
+    setModelFieldErrors({});
   };
 
   const saveWorkspace = async () => {
-    if (!passphrase || dbCheck.state !== 'success' || modelCheck.state !== 'success') return;
+    if (dbCheck.state !== 'success' || modelCheck.state !== 'success') return;
+    const parsedPassphrase = z.string().min(1, 'Passphrase is required.').safeParse(passphrase);
+    if (!parsedPassphrase.success) {
+      setPassphraseError(parsedPassphrase.error.issues[0]?.message ?? 'Passphrase is required.');
+      return;
+    }
+    setPassphraseError('');
     try {
       const value = {
         connection: makeConnection(setup),
@@ -264,6 +299,10 @@ export default function QueryRoom() {
   const requestClearWorkspace = () => setDeleteConfirmOpen(true);
 
   const deleteWorkspace = () => {
+    workspaceEpochRef.current += 1;
+    historySaveSequenceRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
     clearAppStorage();
     clearSessionVault();
     setDeleteConfirmOpen(false);
@@ -272,15 +311,30 @@ export default function QueryRoom() {
     setPassphrase('');
     setThreads([]);
     setMessages([]);
+    setQuestion('');
+    setThreadId('');
+    setBusy(false);
     setDbCheck({ state: 'idle' });
     setModelCheck({ state: 'idle' });
   };
 
   const lockWorkspace = () => {
+    const threadsKey = profiles?.threadsKey;
+    const snapshot = upsertActiveThread(threads, threadId, messages);
+    const epoch = workspaceEpochRef.current;
+    historySaveSequenceRef.current += 1;
     abortRef.current?.abort();
+    abortRef.current = null;
+    if (threadsKey)
+      void saveThreads(snapshot, threadsKey, () => workspaceEpochRef.current === epoch);
     clearSessionVault();
     setProfiles(null);
     setPassphrase('');
+    setThreads([]);
+    setMessages([]);
+    setQuestion('');
+    setThreadId('');
+    setBusy(false);
   };
 
   const startNewThread = () => {
@@ -526,7 +580,15 @@ export default function QueryRoom() {
         showApiKey={showApiKey}
         setShowApiKey={setShowApiKey}
         passphrase={passphrase}
-        setPassphrase={setPassphrase}
+        setPassphrase={value => {
+          setPassphrase(value);
+          setPassphraseError('');
+        }}
+        dbFieldErrors={dbFieldErrors}
+        setDbFieldErrors={setDbFieldErrors}
+        modelFieldErrors={modelFieldErrors}
+        setModelFieldErrors={setModelFieldErrors}
+        passphraseError={passphraseError}
         dbCheck={dbCheck}
         modelCheck={modelCheck}
         setDbCheck={setDbCheck}

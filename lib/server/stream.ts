@@ -17,15 +17,17 @@ export function ndjsonResponse(
   const stream = new ReadableStream({
     async start(controller) {
       let open = true;
+      let currentStage: string | undefined;
       const emit = (event: StreamEvent) => {
         if (!open || abort.signal.aborted) return;
+        if (event.type === 'stage.started') currentStage = event.stage;
         controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       };
       try {
         await run(emit, abort.signal);
       } catch (error) {
         logServerError(new URL(request.url).pathname, error);
-        emit({ type: 'run.error', message: safeAgentError(error) });
+        emit({ type: 'run.error', message: safeAgentError(error, currentStage) });
       } finally {
         request.signal.removeEventListener('abort', onClientAbort);
         open = false;

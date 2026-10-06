@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import {
   connectionProfileSchema,
@@ -32,24 +33,36 @@ function envList(name: string) {
  */
 function assertTargetAllowed(profile: ConnectionProfile) {
   if (profile.dialect === 'sqlite') {
-    const allowedDirs = envList('SQLITE_ALLOWED_DIRS').map(dir => path.resolve(dir));
-    if (!allowedDirs.length) return;
-    const resolved = path.resolve(profile.path);
+    const allowedDirs = envList('SQLITE_ALLOWED_DIRS').map(dir => {
+      try {
+        return realpathSync(dir);
+      } catch {
+        return path.resolve(dir);
+      }
+    });
+    if (!allowedDirs.length) return profile;
+    let resolved: string;
+    try {
+      resolved = realpathSync(profile.path);
+    } catch {
+      throw new UserFacingError('This SQLite file does not exist or could not be resolved.');
+    }
     if (!allowedDirs.some(dir => resolved === dir || resolved.startsWith(`${dir}${path.sep}`)))
       throw new UserFacingError(
         'This SQLite path is outside the directories allowed by the server.',
       );
-    return;
+    // Open the canonical path that was checked, not a symlink that could be retargeted afterward.
+    return { ...profile, path: resolved };
   }
   const allowedHosts = envList('ALLOWED_DB_HOSTS').map(host => host.toLowerCase());
   if (allowedHosts.length && !allowedHosts.includes(profile.host.toLowerCase()))
     throw new UserFacingError('This database host is not allowed by the server.');
+  return profile;
 }
 
 function assertProfile(profile: ConnectionProfile) {
   const parsed = connectionProfileSchema.parse(profile);
-  assertTargetAllowed(parsed);
-  return parsed;
+  return assertTargetAllowed(parsed);
 }
 
 async function openSqlite(profile: SqliteProfile) {
@@ -151,10 +164,8 @@ export async function introspect(
 }
 
 async function readSchema(profile: ConnectionProfile): Promise<SchemaSnapshot> {
-  // eslint-disable-next-line no-useless-assignment
-  let tables: SchemaSnapshot['tables'] = [];
-  // eslint-disable-next-line no-useless-assignment
-  let relationships: SchemaSnapshot['relationships'] = [];
+  let tables: SchemaSnapshot['tables'];
+  let relationships: SchemaSnapshot['relationships'];
 
   if (profile.dialect === 'sqlite') {
     const db = await openSqlite(profile);
@@ -374,17 +385,32 @@ function isStatementTimeout(error: unknown) {
   const { code, errno, message } = error as { code?: unknown; errno?: unknown; message?: unknown };
   return (
     code === '57014' || // PostgreSQL query_canceled (statement_timeout)
+    code === 'PROTOCOL_SEQUENCE_TIMEOUT' || // mysql2 client-side query timeout
     errno === 3024 || // MySQL ER_QUERY_TIMEOUT (max_execution_time)
     errno === 1969 || // MariaDB ER_STATEMENT_TIMEOUT (max_statement_time)
     (typeof message === 'string' &&
-      /statement timeout|maximum statement execution time/i.test(message))
+      /statement timeout|query read timeout|query inactivity timeout|maximum statement execution time/i.test(
+        message,
+      ))
   );
 }
 
+function abortError() {
+  return new DOMException('The request was cancelled.', 'AbortError');
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw abortError();
+}
+
 /** Runs an approved query, turning a timeout into an explanation the user can act on. */
-export async function executeReadOnly(input: ConnectionProfile, sql: string): Promise<QueryResult> {
+export async function executeReadOnly(
+  input: ConnectionProfile,
+  sql: string,
+  signal?: AbortSignal,
+): Promise<QueryResult> {
   try {
-    return await runReadOnly(input, sql);
+    return await runReadOnly(input, sql, signal);
   } catch (error) {
     if (!isStatementTimeout(error)) throw error;
     const seconds = Math.round(input.timeoutMs / 1000);
@@ -394,7 +420,8 @@ export async function executeReadOnly(input: ConnectionProfile, sql: string): Pr
   }
 }
 
-async function runReadOnly(input: ConnectionProfile, sql: string): Promise<QueryResult> {
+async function runReadOnly(input: ConnectionProfile, sql: string, signal?: AbortSignal) {
+  throwIfAborted(signal);
   const profile = assertProfile(input);
   const started = performance.now();
   let rows: Record<string, unknown>[];
@@ -410,12 +437,16 @@ async function runReadOnly(input: ConnectionProfile, sql: string): Promise<Query
         ...(column.type ? { type: column.type } : {}),
       }));
       rows = statement.all() as Record<string, unknown>[];
+      throwIfAborted(signal);
     } finally {
       db.close();
     }
   } else if (profile.dialect === 'postgresql') {
     const client = await openPostgres(profile);
+    const abort = () => void client.end().catch(() => undefined);
+    signal?.addEventListener('abort', abort, { once: true });
     try {
+      throwIfAborted(signal);
       await client.query('BEGIN READ ONLY');
       await client.query(`SET LOCAL statement_timeout = ${Math.round(profile.timeoutMs)}`);
       const response = await client.query(sql);
@@ -425,21 +456,34 @@ async function runReadOnly(input: ConnectionProfile, sql: string): Promise<Query
         type: String(field.dataTypeID),
       }));
       await client.query('ROLLBACK');
+      throwIfAborted(signal);
+    } catch (error) {
+      if (signal?.aborted) throw abortError();
+      throw error;
     } finally {
-      await client.end();
+      signal?.removeEventListener('abort', abort);
+      await client.end().catch(() => undefined);
     }
   } else {
     const connection = await openMysql(profile);
+    const abort = () => connection.destroy();
+    signal?.addEventListener('abort', abort, { once: true });
     try {
+      throwIfAborted(signal);
       await setMysqlTimeout(connection, profile.timeoutMs);
       await connection.query('SET TRANSACTION READ ONLY');
       await connection.beginTransaction();
-      const [resultRows, fields] = await connection.query(sql);
+      const [resultRows, fields] = await connection.query({ sql, timeout: profile.timeoutMs });
       rows = resultRows as Record<string, unknown>[];
       columns = (fields as Array<{ name: string }>).map(field => ({ name: field.name }));
       await connection.rollback();
+      throwIfAborted(signal);
+    } catch (error) {
+      if (signal?.aborted) throw abortError();
+      throw error;
     } finally {
-      await connection.end();
+      signal?.removeEventListener('abort', abort);
+      if (connection.state !== 'disconnected') await connection.end().catch(() => undefined);
     }
   }
 

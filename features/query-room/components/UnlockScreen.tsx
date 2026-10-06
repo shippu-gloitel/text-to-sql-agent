@@ -37,7 +37,12 @@ export default function UnlockScreen({
           <p className='muted'>Enter your passphrase to decrypt your connections and history.</p>
         </div>
         <label className='field'>
-          <span className='field-label'>Passphrase</span>
+          <span className='field-label'>
+            Passphrase{' '}
+            <span className='required-mark' aria-hidden='true'>
+              *
+            </span>
+          </span>
           <input
             className='input'
             type='password'
@@ -46,6 +51,7 @@ export default function UnlockScreen({
             placeholder='Enter your passphrase'
             autoComplete='current-password'
             autoFocus
+            required
           />
         </label>
         {error && (

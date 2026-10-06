@@ -276,8 +276,18 @@ a.btn {
   font-weight: 500;
 }
 
+.required-mark {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .field-hint {
   color: var(--text-3);
+  font-size: 12px;
+}
+
+.field-error {
+  color: var(--danger);
   font-size: 12px;
 }
 
@@ -321,6 +331,11 @@ textarea.input {
 .input-group:focus-within {
   border-color: var(--accent-text);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.input[aria-invalid='true'],
+.input-group:has(input[aria-invalid='true']) {
+  border-color: var(--danger);
 }
 
 .input-group {

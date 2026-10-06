@@ -55,10 +55,11 @@ All settings are optional environment variables (see `.env.example`):
 | --------------------- | ------------------------------------------------------------------------ |
 | `APP_BASIC_AUTH`      | `user:password` — require HTTP Basic auth for the app and all API routes |
 | `ALLOWED_DB_HOSTS`    | Comma-separated hosts that PostgreSQL/MySQL connections may use          |
+| `ALLOWED_MODEL_HOSTS` | Comma-separated hosts that custom model base URLs may use                |
 | `SQLITE_ALLOWED_DIRS` | Comma-separated directories that SQLite files must be inside             |
 
 Without them the server will connect to any host or file a client sends. That is fine on
-localhost, but set all three before exposing the app to anyone else.
+localhost, but set all four before exposing the app to anyone else.
 
 ## Scripts
 

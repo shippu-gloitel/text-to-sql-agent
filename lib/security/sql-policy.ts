@@ -141,13 +141,20 @@ function checkParsedQuery(ast: SelectAst | undefined) {
   return errors;
 }
 
-/** Allowlist entries match exactly, or by table name when one side is unqualified. */
-export function matchesAllowedObject(table: string, allowedObjects: string[]) {
+/**
+ * An intentionally unqualified entry matches that table name in any schema. Callers can require
+ * qualified SQL when a qualified allowlist is security-sensitive (notably PostgreSQL search_path).
+ */
+export function matchesAllowedObject(
+  table: string,
+  allowedObjects: string[],
+  requireQualified = false,
+) {
   const actual = table.toLowerCase();
   return allowedObjects.some(allowed => {
     const configured = allowed.toLowerCase();
     if (actual === configured) return true;
-    if (!actual.includes('.')) return configured.endsWith(`.${actual}`);
+    if (!actual.includes('.')) return !requireQualified && configured.endsWith(`.${actual}`);
     if (!configured.includes('.')) return actual.endsWith(`.${configured}`);
     return false;
   });
@@ -216,7 +223,10 @@ export function validateSql(
         .filter(entry => entry && entry !== '(.*)' && !cteNames.has(entry.toLowerCase())),
     ),
   ];
-  if (allowedObjects.length && tables.some(table => !matchesAllowedObject(table, allowedObjects)))
+  if (
+    allowedObjects.length &&
+    tables.some(table => !matchesAllowedObject(table, allowedObjects, dialect === 'postgresql'))
+  )
     errors.push('The query references a table outside the configured allowlist.');
 
   return { valid: errors.length === 0, sql: normalized, tables, checks, errors };

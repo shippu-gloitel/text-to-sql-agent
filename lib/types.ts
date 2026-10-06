@@ -3,48 +3,57 @@ import { z } from 'zod';
 export type Dialect = 'postgresql' | 'mysql' | 'sqlite';
 
 const sharedConnection = {
-  name: z.string().min(1).max(80),
+  name: z.string().min(1, 'Database name is required.').max(80),
   description: z.string().max(240).default(''),
   ssl: z.boolean().default(false),
   timeoutMs: z.number().int().min(1000).max(120000).default(30000),
   maxRows: z.number().int().min(1).max(10000).default(500),
   maxResponseBytes: z.number().int().min(10000).max(50000000).default(5000000),
-  allowedObjects: z.array(z.string().min(1)).max(200).default([]),
+  allowedObjects: z.array(z.string().min(1).max(255)).max(200).default([]),
 };
 
 export const connectionProfileSchema = z.discriminatedUnion('dialect', [
   z.object({
     ...sharedConnection,
     dialect: z.literal('postgresql'),
-    host: z.string().min(1).max(255),
+    host: z.string().min(1, 'Database host is required.').max(255),
     port: z.number().int().min(1).max(65535).default(5432),
-    database: z.string().min(1).max(255),
-    username: z.string().min(1).max(255),
-    password: z.string().max(2000),
+    database: z.string().min(1, 'Database name is required.').max(255),
+    username: z.string().min(1, 'Database username is required.').max(255),
+    password: z.string().min(1, 'Database password is required.').max(2000),
   }),
   z.object({
     ...sharedConnection,
     dialect: z.literal('mysql'),
-    host: z.string().min(1).max(255),
+    host: z.string().min(1, 'Database host is required.').max(255),
     port: z.number().int().min(1).max(65535).default(3306),
-    database: z.string().min(1).max(255),
-    username: z.string().min(1).max(255),
-    password: z.string().max(2000),
+    database: z.string().min(1, 'Database name is required.').max(255),
+    username: z.string().min(1, 'Database username is required.').max(255),
+    password: z.string().min(1, 'Database password is required.').max(2000),
   }),
   z.object({
     ...sharedConnection,
     dialect: z.literal('sqlite'),
-    path: z.string().min(1).max(1000),
+    path: z.string().min(1, 'SQLite file path is required.').max(1000),
     ssl: z.boolean().default(false),
   }),
 ]);
 export type ConnectionProfile = z.infer<typeof connectionProfileSchema>;
 
+const modelBaseUrlSchema = z.string().refine(value => {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}, 'The model base URL must be a valid HTTP(S) URL without embedded credentials.');
+
 export const modelProfileSchema = z.object({
   provider: z.enum(['openai']),
-  model: z.string().min(1).max(120),
-  apiKey: z.string().min(1).max(4000),
-  baseUrl: z.string().url().optional().or(z.literal('')),
+  model: z.string().min(1, 'Model name is required.').max(120),
+  apiKey: z.string().min(1, 'API key is required.').max(4000),
+  baseUrl: modelBaseUrlSchema.optional().or(z.literal('')),
   temperature: z.number().min(0).max(1).default(0),
 });
 export type ModelProfile = z.infer<typeof modelProfileSchema>;
